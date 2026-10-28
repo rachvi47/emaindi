@@ -47,7 +47,7 @@ main{max-width:34rem;margin:0 auto;padding:1rem 1rem 3rem}
 </style>
 </head>
 <body>
-<header class="top"><a href="home.html" aria-label="Back">&#8592;</a><h1>Settings</h1></header>
+<header class="top"><a href="home.html" aria-label="Back" onclick="if(history.length>1){history.back();return false}">&#8592;</a><h1>Settings</h1></header>
 <main>
   <section class="card">
     <div class="profile">
@@ -188,6 +188,7 @@ $("#logout").addEventListener("click", async () => {
   if (!confirm("Log out of emaindi?")) return;
   try { await setDoc(ref, {online: false}, {merge: true}); } catch (e) {}
   await signOut(auth);
+  try { localStorage.removeItem("lastUid"); } catch (e) {}
   location.replace("login.html");
 });
 $("#del").addEventListener("click", async () => {
