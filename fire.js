@@ -19,6 +19,9 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import {
   getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   doc,
   getDoc,
   setDoc,
@@ -49,7 +52,17 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db = getFirestore(app);
+// Keeps recent chats, messages and users in this browser (IndexedDB), so the app opens fast
+// and shows your chats even offline. Messages are cached as encrypted text, same as in Firestore.
+let db;
+try {
+  db = initializeFirestore(app, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+  });
+} catch (err) {
+  console.warn("Offline cache not available, using normal mode:", err);
+  db = getFirestore(app);
+}
 
 // Keeps the user logged in after the tab or browser is closed.
 setPersistence(auth, browserLocalPersistence).catch(console.error);
