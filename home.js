@@ -7,7 +7,7 @@ const hm = (t) => new Date(t).toLocaleTimeString([], {hour: "2-digit", minute: "
 const online = (u) => !!(u && u.online && Date.now() - ms(u.lastActive) < 60000);
 
 let me, chats = [], people = {}, contacts = {}, watching = {}, found = [];
-let snapSeq = 0, cur = null, msgs = [], msgUnsub = null, replyTo = null, searchTimer, delivering = new Set();
+let friendUids = [], notifyReady = false, snapSeq = 0, cur = null, msgs = [], msgUnsub = null, replyTo = null, searchTimer, delivering = new Set(), seenAt = {};
 
 const peerOf = (c) => c.participants.find((u) => u !== me.uid);
 const chatId = (a, b) => [a, b].sort().join("_");
@@ -144,6 +144,10 @@ function renderList() {
         <div class="line1"><span class="nm">${esc(nameOf(o))}</span><span class="tm ${n ? "new" : ""}">${listTime(t)}</span></div>
         <div class="line2"><span class="pv">${mine ? '<span class="tk">✓</span>' : ""}${esc(preview(c))}</span>${n ? `<span class="badge">${n}</span>` : ""}</div></div></button>`;
     }).join("");
+  }
+  if (!q) {
+    const fr = friendUids.filter((u) => u !== me.uid && people[u] && !chats.some((c) => c.lastMessage && peerOf(c) === u));
+    if (fr.length) h += '<div class="sec">Contacts on emaindi</div>' + fr.map((u) => `<button class="row" data-uid="${u}">${avatar(u)}<div class="meta"><div class="nm">${esc(nameOf(u))}</div><div class="pv">${esc(numberOf(u))}</div></div></button>`).join("");
   }
   $("#rows").innerHTML = h || `<div class="none">${q ? "No chats found. Enter the full phone number (with country code) or email to find someone." : "No chats yet. Search a phone number or email above to start one."}</div>`;
 }
@@ -326,6 +330,99 @@ function showInfo(uid) {
   };
 }
 
+/* ---------- permissions: notifications, contacts, storage ---------- */
+const hasContactApi = () => "contacts" in navigator && "ContactsManager" in window;
+const friendKey = () => "friends:" + me.uid;
+function loadFriends() { try { friendUids = JSON.parse(localStorage.getItem(friendKey()) || "[]"); } catch (e) { friendUids = []; } friendUids.forEach(watch); }
+
+function normPhone(raw) {
+  let d = String(raw).replace(/[\s\-().]/g, "");
+  if (d.startsWith("00")) d = "+" + d.slice(2);
+  if (d.startsWith("+")) return /^\+\d{8,15}$/.test(d) ? d : "";
+  d = d.replace(/^0+/, "");
+  const cc = localStorage.getItem("cc") || "";
+  return cc && /^\d{6,14}$/.test(d) ? cc + d : "";
+}
+async function syncContacts() {
+  if (!hasContactApi()) { alert("This browser can't open your contacts list. Use Chrome on Android, or search a phone number in the search bar."); return; }
+  let picked;
+  try { picked = await navigator.contacts.select(["name", "tel"], {multiple: true}); }
+  catch (err) { console.error("Contacts:", err); return; }
+  if (!picked.length) return;
+  if (!localStorage.getItem("cc") && picked.some((p) => (p.tel || []).some((t) => !/^\s*(\+|00)/.test(t)))) {
+    const cc = (prompt("Your country code, for example +91") || "").trim();
+    if (/^\+\d{1,3}$/.test(cc)) localStorage.setItem("cc", cc);
+  }
+  const byNum = {};
+  for (const p of picked) for (const t of p.tel || []) { const n = normPhone(t); if (n) byNum[n] = (p.name && p.name[0]) || ""; }
+  const nums = Object.keys(byNum), hits = [];
+  try {
+    for (let i = 0; i < nums.length; i += 10) {
+      const snap = await getDocs(query(collection(db, "users"), where("phone", "in", nums.slice(i, i + 10))));
+      snap.docs.forEach((d) => hits.push(d.data()));
+    }
+  } catch (err) { console.error(err); alert("Could not check contacts: " + (err.code || err.message)); return; }
+  for (const u of hits) {
+    if (!u.uid || u.uid === me.uid) continue;
+    people[u.uid] = u; watch(u.uid);
+    if (!friendUids.includes(u.uid)) friendUids.push(u.uid);
+    const nm = byNum[u.phone];
+    if (nm && !contacts[u.uid]) setDoc(doc(db, "users", me.uid, "contacts", u.uid), {name: nm}).catch(() => {});
+  }
+  localStorage.setItem(friendKey(), JSON.stringify(friendUids));
+  localStorage.setItem("contacts-synced", "1");
+  renderList();
+  alert(hits.length ? hits.length + " of your contacts are on emaindi." : "None of those contacts are on emaindi yet.");
+}
+
+async function showPerm() {
+  const p = $("#perm");
+  const notif = "Notification" in window ? Notification.permission : "unsupported";
+  const persisted = navigator.storage && navigator.storage.persisted ? await navigator.storage.persisted() : null;
+  const row = (icon, title, sub, state, act, label) => `<div class="pr"><span class="pi">${icon}</span><div class="tx"><b>${title}</b><small>${sub}</small></div>${
+    state === "granted" ? '<span class="ok">✓ Allowed</span>' : state === "denied" ? '<span class="na">Blocked in browser settings</span>' : state === "unsupported" ? '<span class="na">Not supported</span>' : `<button class="go" data-a="${act}">${label}</button>`}</div>`;
+  p.innerHTML = `<div class="box"><h2>Allow access</h2><p class="sub">Choose what emaindi can use. You can change this any time in your browser settings.</p>
+    ${row("🔔", "Notifications", "Get alerted when a new message arrives.", notif, "notif", "Allow")}
+    ${row("👥", "Contacts", "Find friends who are on emaindi. Your contacts are only checked, never uploaded.", hasContactApi() ? "default" : "unsupported", "contacts", localStorage.getItem("contacts-synced") ? "Choose again" : "Choose")}
+    ${row("💾", "Storage", "Keep recent chats and app data saved on this device so it opens fast and works offline.", persisted === null ? "unsupported" : persisted ? "granted" : "default", "storage", "Allow")}
+    <button class="btn" data-a="done" style="width:100%">Done</button></div>`;
+  p.hidden = false;
+  p.onclick = async (e) => {
+    const a = e.target.dataset.a;
+    if (a === "done" || e.target === p) { p.hidden = true; localStorage.setItem("perm-seen", "1"); return; }
+    if (a === "notif") { try { await Notification.requestPermission(); } catch (err) { console.error(err); } }
+    if (a === "storage") { try { await navigator.storage.persist(); } catch (err) { console.error(err); } }
+    if (a === "contacts") { p.hidden = true; await syncContacts(); }
+    if (a) showPerm();
+  };
+}
+$("#permBtn").addEventListener("click", showPerm);
+
+/* ---------- notifications for new messages ---------- */
+async function showNotif(c) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  const o = peerOf(c);
+  let body = "New message";
+  try { body = (await decryptText(o, c.lastMessage)) || body; } catch (e) {}
+  const title = nameOf(o), opts = {body, tag: c.id, renotify: true};
+  try { const reg = await navigator.serviceWorker.ready; await reg.showNotification(title, opts); }
+  catch (e) { try { new Notification(title, opts); } catch (_) {} }
+}
+function notifyNew() {
+  for (const c of chats) {
+    const t = ms(c.lastMessageAt), prev = seenAt[c.id] ?? (notifyReady ? 0 : t);
+    seenAt[c.id] = t;
+    if (t <= prev || !c.lastSender || c.lastSender === me.uid) continue;
+    if (!(c.unread && c.unread[me.uid] > 0)) continue;
+    if (!document.hidden && cur && cur.id === c.id) continue;
+    showNotif(c);
+  }
+  notifyReady = true;
+}
+
+/* ---------- offline: app files cached by a service worker ---------- */
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch((e) => console.warn("Service worker:", e));
+
 /* ---------- start-up + online presence ---------- */
 const pres = (on) => setDoc(doc(db, "users", me.uid), {online: on, lastActive: serverTimestamp()}, {merge: true}).catch(() => {});
 
@@ -336,6 +433,8 @@ onAuthStateChanged(auth, (user) => {
   keysP = initKeys().catch((e) => { console.error("Key setup failed:", e); alert("Could not set up encryption on this browser."); });
   setDoc(doc(db, "users", me.uid), {uid: me.uid, email: (me.email || "").toLowerCase(), phone: me.phoneNumber || ""}, {merge: true}).catch(() => {});
   pres(true);
+  loadFriends();
+  if (!localStorage.getItem("perm-seen")) setTimeout(showPerm, 900);
   setInterval(() => { if (!document.hidden) pres(true); }, 25000);
   setInterval(() => { renderList(); cur && renderHead(); }, 20000);
   document.addEventListener("visibilitychange", () => { pres(!document.hidden); markRead(); });
@@ -350,7 +449,7 @@ onAuthStateChanged(auth, (user) => {
     chats.sort((a, b) => ms(b.lastMessageAt) - ms(a.lastMessageAt));
     chats.forEach((c) => watch(peerOf(c)));
     if (cur) { cur = chats.find((c) => c.id === cur.id) || cur; renderMsgs(); markRead(); }
-    markDelivered(); renderList();
+    notifyNew(); markDelivered(); renderList();
   }, console.error);
 });
 
