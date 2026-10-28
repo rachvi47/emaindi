@@ -8,7 +8,7 @@ window.__redirecting = true; // tells the safety net in index.html that this scr
   let user = null;
 
   try {
-    const { auth } = await import("fire.js");
+    const { auth } = await import("./fire.js");
     user = await Promise.race([
       (async () => {
         // wait until Firebase has finished restoring the saved login, then read it
