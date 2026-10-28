@@ -3,6 +3,8 @@ const FIREBASE_TIMEOUT_MS = 10000; // slow phones can take a while to restore th
 
 window.__redirecting = true; // tells the safety net in index.html that this script loaded
 
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+
 (async () => {
   const minWait = new Promise((r) => setTimeout(r, MIN_SPLASH_MS));
   let user = null;
