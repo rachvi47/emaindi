@@ -1,4 +1,4 @@
-const MIN_SPLASH_MS = 4000;
+const MIN_SPLASH_MS = 8000;
 const FIREBASE_TIMEOUT_MS = 10000; // slow phones can take a while to restore the saved login
 
 window.__redirecting = true; // tells the safety net in index.html that this script loaded
