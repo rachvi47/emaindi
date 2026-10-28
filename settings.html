@@ -44,6 +44,15 @@ main{max-width:34rem;margin:0 auto;padding:1rem 1rem 3rem}
 .save:disabled{opacity:.5}
 #msg{position:fixed;left:50%;bottom:max(1.2rem,env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--navy);color:#fff;padding:.7rem 1.2rem;border-radius:2rem;font-size:.9rem;z-index:9;max-width:90%}
 .foot{text-align:center;color:var(--soft);font-size:.85rem;margin-top:1.5rem}
+#dlg{position:fixed;inset:0;background:rgba(20,33,61,.55);display:grid;place-items:center;z-index:20;padding:1rem}
+#dlg .dbox{background:var(--card,#fff);color:var(--ink,#14213D);border-radius:1.2rem;padding:1.3rem;width:min(100%,23rem)}
+#dlg h3{margin:0 0 .4rem}
+#dlg p{margin:0 0 .8rem;color:var(--soft);font-size:.9rem;line-height:1.4}
+#dlg input{width:100%;padding:.7rem .9rem;border-radius:.7rem;border:1.5px solid var(--line);background:transparent;color:inherit;outline:0;margin-bottom:.8rem}
+#dlg .dact{display:flex;justify-content:flex-end;gap:.5rem}
+#dlg .dact button{padding:.6rem 1.1rem;border-radius:2rem;font-weight:700;background:var(--navy);color:#fff}
+#dlg .dact button[data-a=c]{background:none;color:inherit}
+#dlg .dact button.dng{background:#B3261E;color:#fff}
 </style>
 </head>
 <body>
@@ -86,10 +95,12 @@ main{max-width:34rem;margin:0 auto;padding:1rem 1rem 3rem}
   <p class="foot">from <b>Tohnna Corporation</b></p>
 </main>
 <div id="msg" hidden></div>
+<div id="dlg" hidden></div>
+<div id="recaptcha-del"></div>
 
 <script type="module">
-import {auth,db,onAuthStateChanged,signOut,updateProfile,doc,getDoc,setDoc} from "./fire.js";
-import {deleteUser} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import {auth,db,onAuthStateChanged,signOut,updateProfile,doc,getDoc,setDoc,collection,getDocs} from "./fire.js";
+import {deleteUser,EmailAuthProvider,reauthenticateWithCredential,reauthenticateWithPopup,GoogleAuthProvider,RecaptchaVerifier,reauthenticateWithPhoneNumber} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import {deleteDoc} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 const $ = (s) => document.querySelector(s);
@@ -100,6 +111,17 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, v ? "1" : "0"); } catch 
 function toast(t) {
   const m = $("#msg"); m.textContent = t; m.hidden = false;
   clearTimeout(toastT); toastT = setTimeout(() => (m.hidden = true), 2800);
+}
+function ask({title, text = "", input = "", ok = "OK", cancel = true, danger = false}) {
+  return new Promise((res) => {
+    const d = $("#dlg");
+    d.innerHTML = `<div class="dbox"><h3></h3><p></p>${input ? `<input id="dIn" type="${input}" autocomplete="off">` : ""}<div class="dact">${cancel ? '<button data-a="c">Cancel</button>' : ""}<button data-a="o" class="${danger ? "dng" : ""}"></button></div></div>`;
+    d.querySelector("h3").textContent = title; d.querySelector("p").textContent = text; d.querySelector('[data-a="o"]').textContent = ok;
+    d.hidden = false;
+    const inp = $("#dIn"), done = (v) => { d.hidden = true; d.onclick = null; res(v); };
+    if (inp) { inp.focus(); inp.addEventListener("keydown", (e) => { if (e.key === "Enter") done(inp.value); }); }
+    d.onclick = (e) => { const a = e.target.dataset.a; if (a === "o") done(inp ? inp.value : true); else if (a === "c" || e.target === d) done(null); };
+  });
 }
 function paintAvatar() {
   const n = $("#name").value.trim() || me.email || "?";
@@ -185,20 +207,50 @@ $("#about").addEventListener("click", () => toast("emaindi 1.0 · from Tohnna Co
 
 /* log out + delete */
 $("#logout").addEventListener("click", async () => {
-  if (!confirm("Log out of emaindi?")) return;
+  if (!(await ask({title: "Log out?", text: "You can log in again any time.", ok: "Log out"}))) return;
   try { await setDoc(ref, {online: false}, {merge: true}); } catch (e) {}
   await signOut(auth);
   try { localStorage.removeItem("lastUid"); } catch (e) {}
   location.replace("login.html");
 });
 $("#del").addEventListener("click", async () => {
-  if (!confirm("Delete your account permanently? This cannot be undone.")) return;
+  if (!(await ask({title: "Delete account?", text: "Your profile, contacts list and key backup are deleted permanently. Your old messages stay with the people you chatted with. This cannot be undone.", ok: "Continue", danger: true}))) return;
+  const user = auth.currentUser;
+  if (!user) return toast("Please log in again.");
+  const prov = (user.providerData[0] && user.providerData[0].providerId) || "password";
   try {
-    await deleteDoc(ref).catch(() => {});
-    await deleteUser(me);
+    // 1. confirm it is really you (Firebase requires a recent login to delete an account)
+    if (prov === "password") {
+      const pw = await ask({title: "Confirm your password", input: "password", ok: "Confirm"});
+      if (!pw) return;
+      await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, pw));
+    } else if (prov === "google.com") {
+      await reauthenticateWithPopup(user, new GoogleAuthProvider());
+    } else if (prov === "phone") {
+      const conf = await reauthenticateWithPhoneNumber(user, user.phoneNumber, new RecaptchaVerifier(auth, "recaptcha-del", {size: "invisible"}));
+      const code = await ask({title: "Enter the SMS code", text: "We sent a code to " + user.phoneNumber, input: "text", ok: "Confirm"});
+      if (!code) return;
+      await conf.confirm(code.trim());
+    }
+    // 2. delete your data
+    for (const sub of ["contacts", "private"]) {
+      try { const snap = await getDocs(collection(db, "users", user.uid, sub)); await Promise.all(snap.docs.map((d) => deleteDoc(d.ref))); } catch (e) { console.warn(sub, e.code || e); }
+    }
+    await deleteDoc(ref);
+    // 3. delete the login itself
+    await deleteUser(user);
+    try { localStorage.removeItem("lastUid"); indexedDB.deleteDatabase("emaindi-keys"); } catch (e) {}
     location.replace("login.html");
   } catch (e) {
-    toast(e.code === "auth/requires-recent-login" ? "For safety, log out, log in again, then delete." : "Could not delete the account.");
+    console.error(e);
+    const c = e.code || "";
+    toast(c === "auth/wrong-password" || c === "auth/invalid-credential" ? "Wrong password." :
+          c === "auth/invalid-verification-code" ? "Wrong SMS code." :
+          c === "auth/popup-closed-by-user" || c === "auth/cancelled-popup-request" ? "Sign-in window was closed." :
+          c === "auth/popup-blocked" ? "Allow pop-ups, or log out, log in again and retry." :
+          c === "permission-denied" ? "Firestore rules block deleting your data." :
+          c === "auth/requires-recent-login" ? "Log out, log in again, then delete." :
+          "Could not delete the account (" + (c || e.message) + ").");
   }
 });
 </script>
