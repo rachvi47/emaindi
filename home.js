@@ -632,7 +632,11 @@ const pres = (on) => setDoc(doc(db, "users", me.uid), mySet().hideOnline ? {onli
 
 hydrate();
 onAuthStateChanged(auth, (user) => {
-  if (!user) { try { localStorage.removeItem("lastUid"); } catch (e) {} return location.replace("login.html"); }
+  if (!user) {
+    // a saved login can take a moment to load: only go to login if there is still nobody after a short wait
+    setTimeout(() => { if (!auth.currentUser) { try { localStorage.removeItem("lastUid"); } catch (e) {} location.replace("login.html"); } }, 2500);
+    return;
+  }
   if (started) return;
   started = true;
   me = user;
