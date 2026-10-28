@@ -1,4 +1,4 @@
-import {auth,db,onAuthStateChanged,doc,getDoc,setDoc,updateDoc,addDoc,collection,query,where,orderBy,onSnapshot,getDocs,serverTimestamp,increment} from "./fire.js";
+import {auth,db,onAuthStateChanged,doc,getDoc,setDoc,updateDoc,addDoc,collection,query,where,orderBy,onSnapshot,getDocs,serverTimestamp,increment,arrayUnion} from "./fire.js";
 
 const $ = (s) => document.querySelector(s);
 const esc = (s = "") => String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -33,7 +33,7 @@ function beep() {
 }
 
 let me, chats = [], people = {}, contacts = {}, watching = {}, found = [];
-let presOn = false, friendUids = [], notifyReady = false, snapSeq = 0, cur = null, msgs = [], msgUnsub = null, replyTo = null, searchTimer, delivering = new Set(), seenAt = {};
+let presOn = false, notifyReady = false, snapSeq = 0, cur = null, msgs = [], msgUnsub = null, replyTo = null, searchTimer, delivering = new Set(), seenAt = {};
 
 const peerOf = (c) => c.participants.find((u) => u !== me.uid);
 const chatId = (a, b) => [a, b].sort().join("_");
@@ -112,6 +112,7 @@ function preview(c) {
   if (!s.startsWith("e2e:")) return s;
   const k = c.id + s;
   if (pvCache.has(k)) return pvCache.get(k);
+  if (!myKeys) return "🔒";            // keys not ready yet (instant start): try again after they load
   pvCache.set(k, "🔒");
   decryptText(peerOf(c), s).then((t) => { pvCache.set(k, t); renderList(); });
   return "🔒";
@@ -156,6 +157,7 @@ function tick(m) {
 
 /* ---------- chat list + search ---------- */
 function renderList() {
+  if (typeof saveCache === "function") saveCache();
   const q = $("#q").value.trim().toLowerCase();
   const rows = chats.filter((c) => c.lastMessage).filter((c) => {
     const o = peerOf(c), p = people[o] || {};
@@ -173,10 +175,6 @@ function renderList() {
         <div class="line1"><span class="nm">${esc(nameOf(o))}</span><span class="tm ${n ? "new" : ""}">${listTime(t)}</span></div>
         <div class="line2"><span class="pv">${mine ? '<span class="tk">✓</span>' : ""}${esc(preview(c))}</span>${n ? `<span class="badge">${n}</span>` : ""}</div></div></button>`;
     }).join("");
-  }
-  if (!q) {
-    const fr = friendUids.filter((u) => u !== me.uid && people[u] && !chats.some((c) => c.lastMessage && peerOf(c) === u));
-    if (fr.length) h += '<div class="sec">Contacts on emaindi</div>' + fr.map((u) => `<button class="row" data-uid="${u}">${avatar(u)}<div class="meta"><div class="nm">${esc(nameOf(u))}</div><div class="pv">${esc(numberOf(u))}</div></div></button>`).join("");
   }
   $("#rows").innerHTML = h || `<div class="none">${q ? "No chats found. Enter the full phone number (with country code) or email to find someone." : "No chats yet. Search a phone number or email above to start one."}</div>`;
 }
@@ -209,32 +207,38 @@ async function findUsers() {
 }
 
 /* ---------- open a chat ---------- */
+const msgCache = {};   // decrypted messages kept in memory, so re-opening a chat is instant
 async function openChat(uid) {
   if (uid === me.uid) return;
   watch(uid);
-  const id = chatId(me.uid, uid), ref = doc(db, "chats", id);
-  // A missing chat doc can make getDoc throw "permission-denied" under common rules,
-  // so treat an error the same as "does not exist" and create it instead.
-  let exists = false;
-  try { exists = (await getDoc(ref)).exists(); } catch (err) { console.warn("getDoc chat:", err.code || err); }
-  if (!exists) {
-    try {
-      await setDoc(ref, {participants: [me.uid, uid].sort(), lastMessage: "", lastMessageAt: serverTimestamp(), lastSender: "", unread: {}, lastRead: {}, deliveredAt: {}}, {merge: true});
-    } catch (err) {
-      console.error("Could not create chat:", err);
-      alert("Could not open chat: " + (err.code || err.message) + "\nCheck your Firestore rules for the 'chats' collection.");
-      return;
-    }
-  }
+  const id = chatId(me.uid, uid), ref = doc(db, "chats", id), known = chats.some((c) => c.id === id);
   cur = chats.find((c) => c.id === id) || {id, participants: [me.uid, uid].sort(), unread: {}, lastRead: {}, deliveredAt: {}};
-  msgs = []; clearReply();
+  msgs = msgCache[id] || []; clearReply();
+  // open the screen straight away (no waiting for the network)
+  if (history.state && history.state.chat) history.replaceState({chat: id}, ""); else history.pushState({chat: id}, "");
   document.body.classList.add("chat-open");
   $("#empty").hidden = true; $("#conv").hidden = false;
   renderHead(); renderMsgs(true); renderList();
-  msgUnsub && msgUnsub();
+  msgUnsub && msgUnsub(); msgUnsub = null;
+  if (!known) {
+    // brand-new chat: create it first (a missing doc can make getDoc throw permission-denied)
+    let exists = false;
+    try { exists = (await getDoc(ref)).exists(); } catch (err) { console.warn("getDoc chat:", err.code || err); }
+    if (!exists) {
+      try {
+        await setDoc(ref, {participants: [me.uid, uid].sort(), lastMessage: "", lastMessageAt: serverTimestamp(), lastSender: "", unread: {}, lastRead: {}, deliveredAt: {}}, {merge: true});
+      } catch (err) {
+        console.error("Could not create chat:", err);
+        alert("Could not open chat: " + (err.code || err.message) + "\nCheck your Firestore rules for the 'chats' collection.");
+        return closeChat();
+      }
+    }
+    if (!cur || cur.id !== id) return;
+  }
   const peer = uid;
   msgUnsub = onSnapshot(query(collection(db, "chats", id, "messages"), orderBy("createdAt")), async (s) => {
-    const raw = s.docs.map((d) => ({id: d.id, pending: d.metadata.hasPendingWrites, ...d.data({serverTimestamps: "estimate"})}));
+    const raw = s.docs.map((d) => ({id: d.id, pending: d.metadata.hasPendingWrites, ...d.data({serverTimestamps: "estimate"})}))
+      .filter((m) => !(m.deletedFor || []).includes(me.uid));          // "delete for me"
     const seq = ++snapSeq;
     const out = await Promise.all(raw.map(async (m) => ({
       ...m,
@@ -242,16 +246,19 @@ async function openChat(uid) {
       replyTo: m.replyTo ? {...m.replyTo, text: await decryptText(peer, m.replyTo.text)} : null,
     })));
     if (seq !== snapSeq || !cur || cur.id !== id) return;
-    msgs = out;
+    msgs = msgCache[id] = out;
     renderMsgs(); markRead();
   }, console.error);
-  $("#txt").focus();
+  if (!/Mobi|Android/i.test(navigator.userAgent)) $("#txt").focus();
 }
-function closeChat() {
+function doCloseChat() {
   msgUnsub && msgUnsub(); msgUnsub = null; cur = null;
   document.body.classList.remove("chat-open");
   $("#conv").hidden = true; $("#empty").hidden = false;
   renderList();
+}
+function closeChat() {
+  if (history.state && history.state.chat) history.back(); else doCloseChat();   // popstate finishes the job
 }
 $("#back").addEventListener("click", closeChat);
 
@@ -329,19 +336,27 @@ $("#replyx").addEventListener("click", clearReply);
 $("#msgs").addEventListener("click", (e) => {
   const el = e.target.closest(".msg");
   const m = el && msgs.find((x) => x.id === el.dataset.id);
-  if (!m || m.deleted || m.pending) return;
+  if (!m || m.pending) return;
+  const mine = m.senderId === me.uid;
   const s = $("#sheet");
-  s.innerHTML = `<div class="box"><button data-a="reply">Reply</button><button data-a="copy">Copy</button>${m.senderId === me.uid ? '<button data-a="del" class="danger">Delete for everyone</button>' : ""}<button data-a="x">Cancel</button></div>`;
-  s.hidden = false;
+  s.innerHTML = `<div class="box">${m.deleted ? "" : '<button data-a="reply">Reply</button><button data-a="copy">Copy</button>'}<button data-a="delme" class="danger">Delete for me</button>${mine && !m.deleted ? '<button data-a="delall" class="danger">Delete for everyone</button>' : ""}<button data-a="x">Cancel</button></div>`;
+  openModal(s);
   s.onclick = async (ev) => {
     const a = ev.target.dataset.a;
     if (!a && ev.target !== s) return;
-    s.hidden = true;
+    closeModal(s);
+    const ref = doc(db, "chats", cur.id, "messages", m.id);
     if (a === "reply") { replyTo = m; $("#replytxt").textContent = m.text; $("#replybar").hidden = false; $("#txt").focus(); }
     if (a === "copy") navigator.clipboard && navigator.clipboard.writeText(m.text);
-    if (a === "del") {
-      await updateDoc(doc(db, "chats", cur.id, "messages", m.id), {deleted: true, text: ""});
-      if (msgs[msgs.length - 1].id === m.id) updateDoc(doc(db, "chats", cur.id), {lastMessage: "🚫 This message was deleted"});
+    if (a === "delme") {
+      msgs = msgs.filter((x) => x.id !== m.id); msgCache[cur.id] = msgs; renderMsgs();   // gone at once
+      updateDoc(ref, {deletedFor: arrayUnion(me.uid)}).catch((err) => { console.error(err); alert("Could not delete the message."); });
+    }
+    if (a === "delall") {
+      try {
+        await updateDoc(ref, {deleted: true, text: "", replyTo: null});
+        if (msgs[msgs.length - 1].id === m.id) updateDoc(doc(db, "chats", cur.id), {lastMessage: "🚫 This message was deleted"});
+      } catch (err) { console.error(err); alert("Could not delete the message."); }
     }
   };
 });
@@ -352,7 +367,7 @@ function showInfo(uid) {
   p.innerHTML = `<div class="box">${avatar(uid, "big")}<h2>${esc(nameOf(uid))}</h2><div class="num">${esc(u.phone || u.email || "")}</div>
     ${u.bio ? `<div class="bio"><small>About</small>${esc(u.bio)}</div>` : ""}
     ${mine ? '<button class="btn" data-a="edit">Edit profile</button>' : `<button class="btn" data-a="name">${contacts[uid] ? "Edit contact name" : "Save to contacts"}</button>`}<button class="btn ghost" data-a="x">Close</button></div>`;
-  p.hidden = false;
+  openModal(p);
   p.onclick = async (e) => {
     const a = e.target.dataset.a;
     if (a === "name") {
@@ -361,55 +376,11 @@ function showInfo(uid) {
       return showInfo(uid);
     }
     if (a === "edit") return (location.href = "settings.html");
-    if (a === "x" || e.target === p) p.hidden = true;
+    if (a === "x" || e.target === p) closeModal(p);
   };
 }
 
-/* ---------- permissions: notifications, contacts, storage ---------- */
-const hasContactApi = () => "contacts" in navigator && "ContactsManager" in window;
-const friendKey = () => "friends:" + me.uid;
-function loadFriends() { try { friendUids = JSON.parse(localStorage.getItem(friendKey()) || "[]"); } catch (e) { friendUids = []; } friendUids.forEach(watch); }
-
-function normPhone(raw) {
-  let d = String(raw).replace(/[\s\-().]/g, "");
-  if (d.startsWith("00")) d = "+" + d.slice(2);
-  if (d.startsWith("+")) return /^\+\d{8,15}$/.test(d) ? d : "";
-  d = d.replace(/^0+/, "");
-  const cc = localStorage.getItem("cc") || "";
-  return cc && /^\d{6,14}$/.test(d) ? cc + d : "";
-}
-async function syncContacts() {
-  if (!hasContactApi()) { alert("This browser can't open your contacts list. Use Chrome on Android, or search a phone number in the search bar."); return; }
-  let picked;
-  try { picked = await navigator.contacts.select(["name", "tel"], {multiple: true}); }
-  catch (err) { console.error("Contacts:", err); return; }
-  if (!picked.length) return;
-  if (!localStorage.getItem("cc") && picked.some((p) => (p.tel || []).some((t) => !/^\s*(\+|00)/.test(t)))) {
-    const cc = (prompt("Your country code, for example +91") || "").trim();
-    if (/^\+\d{1,3}$/.test(cc)) localStorage.setItem("cc", cc);
-  }
-  const byNum = {};
-  for (const p of picked) for (const t of p.tel || []) { const n = normPhone(t); if (n) byNum[n] = (p.name && p.name[0]) || ""; }
-  const nums = Object.keys(byNum), hits = [];
-  try {
-    for (let i = 0; i < nums.length; i += 10) {
-      const snap = await getDocs(query(collection(db, "users"), where("phone", "in", nums.slice(i, i + 10))));
-      snap.docs.forEach((d) => hits.push(d.data()));
-    }
-  } catch (err) { console.error(err); alert("Could not check contacts: " + (err.code || err.message)); return; }
-  for (const u of hits) {
-    if (!u.uid || u.uid === me.uid) continue;
-    people[u.uid] = u; watch(u.uid);
-    if (!friendUids.includes(u.uid)) friendUids.push(u.uid);
-    const nm = byNum[u.phone];
-    if (nm && !contacts[u.uid]) setDoc(doc(db, "users", me.uid, "contacts", u.uid), {name: nm}).catch(() => {});
-  }
-  localStorage.setItem(friendKey(), JSON.stringify(friendUids));
-  localStorage.setItem("contacts-synced", "1");
-  renderList();
-  alert(hits.length ? hits.length + " of your contacts are on emaindi." : "None of those contacts are on emaindi yet.");
-}
-
+/* ---------- permissions: notifications + storage ---------- */
 async function showPerm() {
   const p = $("#perm");
   const notif = "Notification" in window ? Notification.permission : "unsupported";
@@ -418,20 +389,17 @@ async function showPerm() {
     state === "granted" ? '<span class="ok">✓ Allowed</span>' : state === "denied" ? '<span class="na">Blocked in browser settings</span>' : state === "unsupported" ? '<span class="na">Not supported</span>' : `<button class="go" data-a="${act}">${label}</button>`}</div>`;
   p.innerHTML = `<div class="box"><h2>Allow access</h2><p class="sub">Choose what emaindi can use. You can change this any time in your browser settings.</p>
     ${row("🔔", "Notifications", "Get alerted when a new message arrives.", notif, "notif", "Allow")}
-    ${row("👥", "Contacts", "Find friends who are on emaindi. Your contacts are only checked, never uploaded.", hasContactApi() ? "default" : "unsupported", "contacts", localStorage.getItem("contacts-synced") ? "Choose again" : "Choose")}
     ${row("💾", "Storage", "Keep recent chats and app data saved on this device so it opens fast and works offline.", persisted === null ? "unsupported" : persisted ? "granted" : "default", "storage", "Allow")}
     <button class="btn" data-a="done" style="width:100%">Done</button></div>`;
-  p.hidden = false;
+  openModal(p);
   p.onclick = async (e) => {
     const a = e.target.dataset.a;
-    if (a === "done" || e.target === p) { p.hidden = true; localStorage.setItem("perm-seen", "1"); return; }
+    if (a === "done" || e.target === p) { closeModal(p); localStorage.setItem("perm-seen", "1"); return; }
     if (a === "notif") { try { await Notification.requestPermission(); } catch (err) { console.error(err); } }
     if (a === "storage") { try { await navigator.storage.persist(); } catch (err) { console.error(err); } }
-    if (a === "contacts") { p.hidden = true; await syncContacts(); }
     if (a) showPerm();
   };
 }
-$("#permBtn").addEventListener("click", showPerm);
 
 /* ---------- notifications for new messages ---------- */
 async function showNotif(c) {
@@ -459,17 +427,60 @@ function notifyNew() {
 /* ---------- offline: app files cached by a service worker ---------- */
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch((e) => console.warn("Service worker:", e));
 
+
+/* ---------- back button / swipe-back: chat -> chat list, never straight out of the app ---------- */
+const MODALS = ["#info", "#sheet", "#perm"];
+function openModal(el) { if (el.hidden) history.pushState({modal: 1}, ""); el.hidden = false; }
+function closeModal(el) { if (el.hidden) return; el.hidden = true; if (history.state && history.state.modal) history.back(); }
+history.replaceState({list: 1}, "");
+addEventListener("popstate", (e) => {
+  const s = e.state || {};
+  MODALS.forEach((id) => ($(id).hidden = true));
+  if (!s.chat && cur) doCloseChat();
+});
+
+
+/* ---------- instant start: recent chats are kept on this device (IndexedDB) ---------- */
+const T = (n) => (n ? {toMillis: () => n} : null);
+const packMs = (o) => { const r = {}; for (const k in o || {}) r[k] = ms(o[k]); return r; };
+const unpackMs = (o) => { const r = {}; for (const k in o || {}) r[k] = T(o[k]); return r; };
+let saveT = null, started = false;
+function saveCache() {
+  clearTimeout(saveT);
+  saveT = setTimeout(() => {
+    if (!me || me.cached) return;
+    const ids = new Set([me.uid, ...chats.map(peerOf)]), pp = {};
+    ids.forEach((u) => { const p = people[u]; if (p) pp[u] = {uid: p.uid, name: p.name, phone: p.phone, email: p.email, photoUrl: p.photoUrl, bio: p.bio, settings: p.settings, publicKey: p.publicKey, lastActive: ms(p.lastActive)}; });
+    const cs = chats.filter((c) => c.lastMessage).slice(0, 60).map((c) => ({id: c.id, participants: c.participants, lastMessage: c.lastMessage, lastMessageAt: ms(c.lastMessageAt), lastSender: c.lastSender || "", unread: c.unread || {}, lastRead: packMs(c.lastRead), deliveredAt: packMs(c.deliveredAt)}));
+    idbSet("cache:" + me.uid, {chats: cs, people: pp, contacts}).catch(() => {});
+  }, 800);
+}
+async function hydrate() {
+  let uid = null; try { uid = localStorage.getItem("lastUid"); } catch (e) {}
+  if (!uid) return;
+  let d = null; try { d = await idbGet("cache:" + uid); } catch (e) {}
+  if (!d || started) return;                       // real data already arrived
+  me = {uid, cached: true};
+  chats = (d.chats || []).map((c) => ({...c, lastMessageAt: T(c.lastMessageAt), lastRead: unpackMs(c.lastRead), deliveredAt: unpackMs(c.deliveredAt)}));
+  for (const u in d.people || {}) people[u] = {...d.people[u], lastActive: T(d.people[u].lastActive)};
+  contacts = d.contacts || {};
+  renderMe(); renderList();
+}
+
 /* ---------- start-up + online presence ---------- */
 const pres = (on) => setDoc(doc(db, "users", me.uid), mySet().hideOnline ? {online: false} : {online: on, lastActive: serverTimestamp()}, {merge: true}).catch(() => {});
 
+hydrate();
 onAuthStateChanged(auth, (user) => {
-  if (!user) return location.replace("login.html");
-  if (me) return;
+  if (!user) { try { localStorage.removeItem("lastUid"); } catch (e) {} return location.replace("login.html"); }
+  if (started) return;
+  started = true;
   me = user;
+  try { localStorage.setItem("lastUid", user.uid); } catch (e) {}
   keysP = initKeys().catch((e) => { console.error("Key setup failed:", e); alert("Could not set up encryption on this browser."); });
+  keysP.then(() => { pvCache.clear(); renderList(); });
   setDoc(doc(db, "users", me.uid), {uid: me.uid, email: (me.email || "").toLowerCase(), phone: me.phoneNumber || ""}, {merge: true}).catch(() => {});
   watch(me.uid);
-  loadFriends();
   if (!localStorage.getItem("perm-seen")) setTimeout(showPerm, 900);
   setInterval(() => { if (!document.hidden) pres(true); }, 25000);
   setInterval(() => { renderList(); cur && renderHead(); }, 20000);
