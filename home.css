@@ -87,6 +87,30 @@ body.chat-open #chat{display:flex}
 .pr .go{flex:none;padding:.5rem 1rem;border-radius:2rem;background:var(--navy);color:#fff;font-weight:700;font-size:.85rem}
 .pr .ok{flex:none;color:#1a8f4a;font-weight:700;font-size:.85rem}
 .pr .na{flex:none;color:var(--soft);font-size:.8rem}
+#meBtn{width:2.6rem;height:2.6rem;padding:0}
+#meBtn .av{width:2.2rem;height:2.2rem;font-size:.95rem}
+#info .bio{color:var(--navy);margin:.4rem 0 0;font-size:.95rem;max-width:100%;overflow-wrap:anywhere;white-space:pre-wrap}
+#info .bio small{display:block;color:var(--soft);font-size:.72rem;text-transform:uppercase;font-weight:700;margin-bottom:.1rem}
+:root[data-theme=dark] body{color:#f1f3f9;background:#0e1626}
+:root[data-theme=dark]{--paper:#0e1626;--line:#2a3555;--soft:#a5adc4}
+:root[data-theme=dark] #list,:root[data-theme=dark] .search,:root[data-theme=dark] #replybar,:root[data-theme=dark] .composer,:root[data-theme=dark] #sheet .box,:root[data-theme=dark] #info .box,:root[data-theme=dark] #perm .box{background:#17213a}
+:root[data-theme=dark] .top{background:#0b1220}
+:root[data-theme=dark] .row{border-bottom-color:#222d4a}
+:root[data-theme=dark] .row:hover,:root[data-theme=dark] .row.on,:root[data-theme=dark] #sheet button:hover{background:#1e2a47}
+:root[data-theme=dark] .dot{border-color:#17213a}
+:root[data-theme=dark] .msg{background:#1f2b4a;color:#f1f3f9;box-shadow:none}
+:root[data-theme=dark] .msg.me{background:var(--marigold);color:#14213D}
+:root[data-theme=dark] .msg.me .ft,:root[data-theme=dark] .msg.me .t{color:#14213D}
+:root[data-theme=dark] .msg.me .ft{opacity:.7}
+:root[data-theme=dark] .quote{border-left-color:var(--marigold);background:rgba(255,255,255,.08)}
+:root[data-theme=dark] .msg.me .quote{border-left-color:#14213D;background:rgba(20,33,61,.12)}
+:root[data-theme=dark] .btn,:root[data-theme=dark] #send,:root[data-theme=dark] .pr .go{background:var(--marigold);color:#14213D}
+:root[data-theme=dark] .btn.ghost{background:none;color:#f1f3f9}
+:root[data-theme=dark] #info .bio,:root[data-theme=dark] #replyx,:root[data-theme=dark] #empty .logo{color:#f1f3f9}
+:root[data-theme=dark] #replybar{border-left-color:var(--marigold)}
+:root[data-theme=dark] .search input:focus,:root[data-theme=dark] .composer textarea:focus{border-color:var(--marigold)}
+:root[data-theme=dark] #sheet .danger{color:#ff8a80}
+:root[data-theme=dark] .day{color:#f1f3f9}
 @media(min-width:820px){
 #perm{align-items:center}
 #perm .box{border-radius:1.2rem}
