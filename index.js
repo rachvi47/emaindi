@@ -1,4 +1,4 @@
-const MIN_SPLASH_MS = 8000;
+const MIN_SPLASH_MS = 4000; // splash stays at least 4 seconds, then moves on
 const FIREBASE_TIMEOUT_MS = 10000; // slow phones can take a while to restore the saved login
 
 window.__redirecting = true; // tells the safety net in index.html that this script loaded
@@ -6,7 +6,6 @@ window.__redirecting = true; // tells the safety net in index.html that this scr
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 
 (async () => {
-  try { if (localStorage.getItem("lastUid")) return window.location.replace("home.html"); } catch (e) {}   // logged in before: open chats at once
   const minWait = new Promise((r) => setTimeout(r, MIN_SPLASH_MS));
   let user = null;
 
