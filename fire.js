@@ -4,8 +4,10 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import {
   getAuth,
-  setPersistence,
+  initializeAuth,
+  indexedDBLocalPersistence,
   browserLocalPersistence,
+  browserPopupRedirectResolver,
   onAuthStateChanged,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
@@ -53,7 +55,17 @@ const firebaseConfig = {
 
 
 const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
+// Saved login: try IndexedDB first, then localStorage. Set up once here (not with setPersistence on every
+// page load, which could race with restoring the saved user and log you out).
+let auth;
+try {
+  auth = initializeAuth(app, {
+    persistence: [indexedDBLocalPersistence, browserLocalPersistence],
+    popupRedirectResolver: browserPopupRedirectResolver,
+  });
+} catch (err) {
+  auth = getAuth(app);
+}
 // Keeps recent chats, messages and users in this browser (IndexedDB), so the app opens fast
 // and shows your chats even offline. Messages are cached as encrypted text, same as in Firestore.
 let db;
@@ -66,8 +78,6 @@ try {
   db = getFirestore(app);
 }
 
-// Keeps the user logged in after the tab or browser is closed.
-setPersistence(auth, browserLocalPersistence).catch(console.error);
 
 export {
   app,
