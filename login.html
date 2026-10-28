@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Log in - emaindi</title>
+  <meta name="theme-color" content="#FFC93C">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@800&family=DM+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="login-extra.css">
+</head>
+<body>
+  <main class="auth-page">
+    <section class="auth-card">
+      <a class="auth-brand" href="index.html">emaindi</a>
+
+      <h1 id="title">Welcome back</h1>
+      <p class="sub" id="subtitle">Log in to see your chats.</p>
+
+      <div class="tabs" role="tablist" aria-label="Log in or create account">
+        <button class="tab" role="tab" id="tab-login" aria-selected="true" type="button">Log in</button>
+        <button class="tab" role="tab" id="tab-signup" aria-selected="false" type="button">Create account</button>
+      </div>
+
+      <div class="methods" role="tablist" aria-label="Use email or phone">
+        <button class="method" role="tab" id="method-email" aria-selected="true" type="button">Email</button>
+        <button class="method" role="tab" id="method-phone" aria-selected="false" type="button">Phone number</button>
+      </div>
+
+      <form id="auth-form" novalidate>
+        <div class="field" id="name-field" hidden>
+          <label for="name">Name</label>
+          <input id="name" type="text" autocomplete="name">
+        </div>
+
+        <!-- Email and password -->
+        <div id="email-block">
+          <div class="field">
+            <label for="email">Email</label>
+            <input id="email" type="email" autocomplete="email">
+          </div>
+
+          <div class="field">
+            <label for="password">Password</label>
+            <input id="password" type="password" autocomplete="current-password" minlength="6">
+          </div>
+
+          <div class="row-end" id="forgot-row">
+            <button class="link-btn" id="forgot" type="button">Forgot password?</button>
+          </div>
+        </div>
+
+        <!-- Phone number and code -->
+        <div id="phone-block" hidden>
+          <div class="field" id="phone-field">
+            <label for="phone">Phone number</label>
+            <input id="phone" type="tel" autocomplete="tel" placeholder="+91 98765 43210">
+            <p class="hint">Include the country code. There is no password: we text you a code each time you log in.</p>
+          </div>
+
+          <div class="field" id="code-field" hidden>
+            <label for="code">Verification code</label>
+            <input id="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
+            <p class="hint" id="code-hint"></p>
+            <div class="row-between">
+              <button class="link-btn" id="change-number" type="button">Change number</button>
+              <button class="link-btn" id="resend" type="button">Resend code</button>
+            </div>
+          </div>
+        </div>
+
+        <p class="message" id="message" role="alert"></p>
+
+        <button class="btn" id="submit" type="submit">Log in</button>
+      </form>
+
+      <div class="divider"><span>or</span></div>
+
+      <button class="btn-google" id="google" type="button">
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+          <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+          <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+          <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+        </svg>
+        Continue with Google
+      </button>
+
+      <!-- Invisible reCAPTCHA that Firebase needs for phone sign-in -->
+      <div id="recaptcha-container"></div>
+    </section>
+  </main>
+
+  <footer class="brand-footer">from <strong>Tohnna Corporation</strong></footer>
+
+  <script type="module" src="login.js"></script>
+</body>
+</html>

@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Chats - emaindi</title>
+  <meta name="theme-color" content="#14213D">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@800&family=DM+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="home.css">
+</head>
+<body>
+  <div id="app">
+    <aside id="list">
+      <header class="top">
+        <h1 class="logo">emaindi</h1>
+        <a class="dots" href="settings.html" aria-label="Settings">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+        </a>
+      </header>
+      <div class="search">
+        <input id="q" type="search" placeholder="Search chats, phone number or email" autocomplete="off">
+      </div>
+      <div id="rows"></div>
+    </aside>
+
+    <section id="chat">
+      <div id="empty"><div class="logo">emaindi</div><p>Select a chat or search a phone number to start texting.</p></div>
+      <div id="conv" hidden>
+        <header class="top chat-top">
+          <button id="back" class="ic" aria-label="Back">&#8592;</button>
+          <div id="peer" class="peer"></div>
+        </header>
+        <div id="msgs"></div>
+        <div id="replybar" hidden><div id="replytxt"></div><button id="replyx" class="ic" aria-label="Cancel reply">&#10005;</button></div>
+        <footer class="composer">
+          <textarea id="txt" rows="1" placeholder="Message" maxlength="5000"></textarea>
+          <button id="send" aria-label="Send">&#10148;</button>
+        </footer>
+      </div>
+    </section>
+  </div>
+
+  <div id="sheet" hidden></div>
+  <div id="info" hidden></div>
+
+  <script type="module" src="home.js"></script>
+</body>
+</html>

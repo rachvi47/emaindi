@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Settings - emaindi</title>
+<meta name="theme-color" content="#14213D">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@800&family=DM+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<script>try{document.documentElement.dataset.theme=localStorage.getItem("theme")||"light"}catch(e){}</script>
+<style>
+:root{--bg:#FFF8E6;--card:#fff;--ink:#14213D;--soft:#4A5470;--line:#E3D5A6;--navy:#14213D;--gold:#FFC93C;--danger:#B3261E;--ok:#1B6B3A;
+--display:'Bricolage Grotesque','Trebuchet MS',system-ui,sans-serif;--body:'DM Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
+:root[data-theme=dark]{--bg:#0e1626;--card:#17213a;--ink:#f1f3f9;--soft:#a5adc4;--line:#2a3555;--danger:#ff8a80;--ok:#6fdc97}
+*{box-sizing:border-box}[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);-webkit-font-smoothing:antialiased}
+button,input,textarea{font:inherit;color:inherit}button{cursor:pointer;border:0;background:none}
+.top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:.6rem;padding:.75rem 1rem;padding-top:max(.75rem,env(safe-area-inset-top));background:var(--navy);color:#fff}
+.top a{color:#fff;text-decoration:none;font-size:1.4rem;width:2.2rem;height:2.2rem;display:grid;place-items:center;border-radius:50%}
+.top h1{margin:0;font-family:var(--display);font-size:1.4rem;color:var(--gold)}
+main{max-width:34rem;margin:0 auto;padding:1rem 1rem 3rem}
+.card{background:var(--card);border-radius:1.2rem;margin-bottom:1rem;overflow:hidden;border:1px solid var(--line)}
+.card h2{margin:0;padding:.9rem 1.1rem .3rem;font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--soft)}
+.profile{display:flex;flex-direction:column;align-items:center;padding:1.5rem 1rem 1rem;gap:.3rem}
+.pic{position:relative;width:7.5rem;height:7.5rem}
+.av{width:100%;height:100%;border-radius:50%;background:var(--navy);color:var(--gold);display:grid;place-items:center;font-size:3rem;font-weight:700;overflow:hidden}
+.av img{width:100%;height:100%;object-fit:cover}
+.cam{position:absolute;right:0;bottom:0;width:2.4rem;height:2.4rem;border-radius:50%;background:var(--gold);color:var(--navy);font-size:1.1rem;border:3px solid var(--card)}
+.link{color:var(--soft);font-size:.85rem;text-decoration:underline}
+.field{display:block;padding:.6rem 1.1rem}
+.field span{display:flex;justify-content:space-between;font-size:.8rem;color:var(--soft);margin-bottom:.2rem}
+.field input,.field textarea{width:100%;border:0;border-bottom:1.5px solid var(--line);background:none;padding:.4rem 0;outline:0;resize:none}
+.field input:focus,.field textarea:focus{border-color:var(--ink)}
+.field input[readonly]{color:var(--soft)}
+.row{display:flex;align-items:center;justify-content:space-between;gap:1rem;width:100%;padding:.85rem 1.1rem;text-align:left;border-top:1px solid var(--line)}
+.row small{display:block;color:var(--soft);font-size:.8rem}
+.row.danger{color:var(--danger);font-weight:700}
+.sw{position:relative;flex:none;width:2.8rem;height:1.6rem;border-radius:1rem;background:var(--line);transition:.2s}
+.sw::after{content:"";position:absolute;top:.2rem;left:.2rem;width:1.2rem;height:1.2rem;border-radius:50%;background:#fff;transition:.2s}
+.sw.on{background:var(--ok)}.sw.on::after{left:1.4rem}
+.save{display:block;width:calc(100% - 2.2rem);margin:.6rem 1.1rem 1.1rem;padding:.8rem;border-radius:2rem;background:var(--navy);color:#fff;font-weight:700}
+:root[data-theme=dark] .save{background:var(--gold);color:var(--navy)}
+.save:disabled{opacity:.5}
+#msg{position:fixed;left:50%;bottom:max(1.2rem,env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--navy);color:#fff;padding:.7rem 1.2rem;border-radius:2rem;font-size:.9rem;z-index:9;max-width:90%}
+.foot{text-align:center;color:var(--soft);font-size:.85rem;margin-top:1.5rem}
+</style>
+</head>
+<body>
+<header class="top"><a href="home.html" aria-label="Back">&#8592;</a><h1>Settings</h1></header>
+<main>
+  <section class="card">
+    <div class="profile">
+      <div class="pic"><div class="av" id="av"></div><button class="cam" id="cam" aria-label="Change photo">&#128247;</button></div>
+      <button class="link" id="rmpic" hidden>Remove photo</button>
+      <input type="file" id="file" accept="image/*" hidden>
+    </div>
+    <label class="field"><span>Name <i id="nc">0/25</i></span><input id="name" maxlength="25" placeholder="Your name"></label>
+    <label class="field"><span>About / Bio <i id="bc">0/139</i></span><textarea id="bio" rows="2" maxlength="139" placeholder="Hey there! I am using emaindi."></textarea></label>
+    <label class="field"><span>Phone number</span><input id="phone" readonly placeholder="Not added"></label>
+    <label class="field"><span>Email</span><input id="email" readonly placeholder="Not added"></label>
+    <button class="save" id="save">Save profile</button>
+  </section>
+
+  <section class="card"><h2>Privacy</h2>
+    <button class="row" data-s="hideOnline"><div>Hide online &amp; last seen<small>Others won't see when you are online</small></div><i class="sw"></i></button>
+    <button class="row" data-s="noReceipts"><div>Turn off read receipts<small>No blue ticks for you or for others</small></div><i class="sw"></i></button>
+  </section>
+
+  <section class="card"><h2>Chats &amp; notifications</h2>
+    <button class="row" data-l="theme"><div>Dark theme<small>Easier on the eyes at night</small></div><i class="sw"></i></button>
+    <button class="row" data-l="enterSend"><div>Enter key sends<small>Otherwise Enter adds a new line</small></div><i class="sw"></i></button>
+    <button class="row" data-l="sound"><div>Message sound<small>Play a sound for new messages</small></div><i class="sw"></i></button>
+    <button class="row" id="notif"><div>Browser notifications<small id="nstat">Tap to allow</small></div></button>
+  </section>
+
+  <section class="card"><h2>Help</h2>
+    <button class="row" id="invite"><div>Invite a friend<small>Share emaindi with someone</small></div></button>
+    <button class="row" id="about"><div>About emaindi<small>Version 1.0 · from Tohnna Corporation</small></div></button>
+  </section>
+
+  <section class="card"><h2>Account</h2>
+    <button class="row" id="logout"><div>Log out</div></button>
+    <button class="row danger" id="del"><div>Delete my account</div></button>
+  </section>
+  <p class="foot">from <b>Tohnna Corporation</b></p>
+</main>
+<div id="msg" hidden></div>
+
+<script type="module">
+import {auth,db,onAuthStateChanged,signOut,updateProfile,doc,getDoc,setDoc} from "./fire.js";
+import {deleteUser} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import {deleteDoc} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+
+const $ = (s) => document.querySelector(s);
+let me, ref, photo = "", toastT;
+const ls = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v === "1"; } catch (e) { return d; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v ? "1" : "0"); } catch (e) {} };
+
+function toast(t) {
+  const m = $("#msg"); m.textContent = t; m.hidden = false;
+  clearTimeout(toastT); toastT = setTimeout(() => (m.hidden = true), 2800);
+}
+function paintAvatar() {
+  const n = $("#name").value.trim() || me.email || "?";
+  $("#av").innerHTML = photo ? `<img src="${photo}" alt="" referrerpolicy="no-referrer">` : n[0].toUpperCase();
+  $("#rmpic").hidden = !photo;
+}
+function counts() { $("#nc").textContent = $("#name").value.length + "/25"; $("#bc").textContent = $("#bio").value.length + "/139"; }
+const setSw = (el, on) => el.querySelector(".sw").classList.toggle("on", on);
+
+onAuthStateChanged(auth, async (user) => {
+  if (!user) return location.replace("login.html");
+  me = user; ref = doc(db, "users", me.uid);
+  let d = {};
+  try { const s = await getDoc(ref); d = s.exists() ? s.data() : {}; } catch (e) { console.error(e); }
+  $("#name").value = d.name || me.displayName || "";
+  $("#bio").value = d.bio || "";
+  $("#phone").value = d.phone || me.phoneNumber || "";
+  $("#email").value = d.email || me.email || "";
+  photo = d.photoUrl || me.photoURL || "";
+  const st = d.settings || {};
+  document.querySelectorAll("[data-s]").forEach((b) => setSw(b, !!st[b.dataset.s]));
+  paintAvatar(); counts();
+});
+
+document.querySelectorAll("[data-l]").forEach((b) => {
+  const k = b.dataset.l, def = k === "theme" ? false : true;
+  setSw(b, k === "theme" ? ls("theme", false) || localStorage.getItem("theme") === "dark" : ls(k, def));
+  b.addEventListener("click", () => {
+    const on = !b.querySelector(".sw").classList.contains("on");
+    setSw(b, on);
+    if (k === "theme") { document.documentElement.dataset.theme = on ? "dark" : "light"; try { localStorage.setItem("theme", on ? "dark" : "light"); } catch (e) {} }
+    else lsSet(k, on);
+  });
+});
+document.querySelectorAll("[data-s]").forEach((b) => b.addEventListener("click", async () => {
+  const on = !b.querySelector(".sw").classList.contains("on");
+  setSw(b, on);
+  try { await setDoc(ref, {settings: {[b.dataset.s]: on}}, {merge: true}); toast("Saved"); }
+  catch (e) { setSw(b, !on); toast("Could not save. Try again."); }
+}));
+
+["#name", "#bio"].forEach((s) => $(s).addEventListener("input", () => { counts(); paintAvatar(); }));
+
+/* profile picture: crop to a square, shrink to 256px, store in Firestore */
+$("#cam").addEventListener("click", () => $("#file").click());
+$("#file").addEventListener("change", (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  const img = new Image();
+  img.onload = () => {
+    const c = document.createElement("canvas"); c.width = c.height = 256;
+    const s = Math.min(img.width, img.height);
+    c.getContext("2d").drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, 256, 256);
+    photo = c.toDataURL("image/jpeg", 0.8); paintAvatar(); URL.revokeObjectURL(img.src);
+    toast("Photo ready. Tap Save profile.");
+  };
+  img.onerror = () => toast("That file is not a valid image.");
+  img.src = URL.createObjectURL(f);
+  e.target.value = "";
+});
+$("#rmpic").addEventListener("click", () => { photo = ""; paintAvatar(); toast("Photo removed. Tap Save profile."); });
+
+$("#save").addEventListener("click", async () => {
+  const name = $("#name").value.trim();
+  if (!name) return toast("Please enter your name.");
+  $("#save").disabled = true;
+  try {
+    await setDoc(ref, {uid: me.uid, name, bio: $("#bio").value.trim(), photoUrl: photo}, {merge: true});
+    await updateProfile(me, {displayName: name});
+    toast("Profile saved");
+  } catch (e) { console.error(e); toast("Could not save. Check your connection."); }
+  $("#save").disabled = false;
+});
+
+/* notifications / invite / about */
+function nstat() { $("#nstat").textContent = !("Notification" in window) ? "Not supported on this browser" : Notification.permission === "granted" ? "On" : Notification.permission === "denied" ? "Blocked in browser settings" : "Tap to allow"; }
+nstat();
+$("#notif").addEventListener("click", async () => { if ("Notification" in window) { await Notification.requestPermission(); nstat(); } });
+$("#invite").addEventListener("click", async () => {
+  const data = {title: "emaindi", text: "Chat with me on emaindi!", url: location.origin};
+  try { navigator.share ? await navigator.share(data) : (await navigator.clipboard.writeText(data.url), toast("Link copied")); } catch (e) {}
+});
+$("#about").addEventListener("click", () => toast("emaindi 1.0 · from Tohnna Corporation"));
+
+/* log out + delete */
+$("#logout").addEventListener("click", async () => {
+  if (!confirm("Log out of emaindi?")) return;
+  try { await setDoc(ref, {online: false}, {merge: true}); } catch (e) {}
+  await signOut(auth);
+  location.replace("login.html");
+});
+$("#del").addEventListener("click", async () => {
+  if (!confirm("Delete your account permanently? This cannot be undone.")) return;
+  try {
+    await deleteDoc(ref).catch(() => {});
+    await deleteUser(me);
+    location.replace("login.html");
+  } catch (e) {
+    toast(e.code === "auth/requires-recent-login" ? "For safety, log out, log in again, then delete." : "Could not delete the account.");
+  }
+});
+</script>
+</body>
+</html>

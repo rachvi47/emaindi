@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>emaindi</title>
+  <meta name="theme-color" content="#FFC93C">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@800&family=DM+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="splash">
+    <div class="splash-wrap">
+      <div class="bubble">
+        <h1 class="wordmark">emaindi</h1>
+      </div>
+      <div class="reply" role="status" aria-label="Loading">
+        <div class="typing"><span></span><span></span><span></span></div>
+      </div>
+    </div>
+    <a id="fallback" class="fallback" href="login.html" hidden>Continue</a>
+  </main>
+
+  <footer class="brand-footer">from <strong>Tohnna Corporation</strong></footer>
+
+<script>
+  setTimeout(function () {
+    if (!window.__redirecting) window.location.replace("login.html");
+  }, 5000);
+</script>
+</body>
+</html>
