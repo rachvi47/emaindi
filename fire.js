@@ -36,6 +36,7 @@ import {
   serverTimestamp,
   increment,
   arrayUnion,
+  limit,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 // >>> KEEP YOUR OWN VALUES HERE <<<
@@ -96,4 +97,5 @@ export {
   serverTimestamp,
   increment,
   arrayUnion,
+  limit,
 };
