@@ -72,7 +72,7 @@ function renderList() {
 }
 $("#rows").addEventListener("click", (e) => {
   const r = e.target.closest(".row");
-  if (r) openChat(r.dataset.uid);
+  if (r) openChat(r.dataset.uid).catch((err) => { console.error("openChat failed:", err); alert("Could not open chat: " + (err.code || err.message)); });
 });
 $("#q").addEventListener("input", () => {
   renderList();
@@ -103,9 +103,18 @@ async function openChat(uid) {
   if (uid === me.uid) return;
   watch(uid);
   const id = chatId(me.uid, uid), ref = doc(db, "chats", id);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) {
-    await setDoc(ref, {participants: [me.uid, uid].sort(), lastMessage: "", lastMessageAt: serverTimestamp(), lastSender: "", unread: {}, lastRead: {}, deliveredAt: {}});
+  // A missing chat doc can make getDoc throw "permission-denied" under common rules,
+  // so treat an error the same as "does not exist" and create it instead.
+  let exists = false;
+  try { exists = (await getDoc(ref)).exists(); } catch (err) { console.warn("getDoc chat:", err.code || err); }
+  if (!exists) {
+    try {
+      await setDoc(ref, {participants: [me.uid, uid].sort(), lastMessage: "", lastMessageAt: serverTimestamp(), lastSender: "", unread: {}, lastRead: {}, deliveredAt: {}}, {merge: true});
+    } catch (err) {
+      console.error("Could not create chat:", err);
+      alert("Could not open chat: " + (err.code || err.message) + "\nCheck your Firestore rules for the 'chats' collection.");
+      return;
+    }
   }
   cur = chats.find((c) => c.id === id) || {id, participants: [me.uid, uid].sort(), unread: {}, lastRead: {}, deliveredAt: {}};
   msgs = []; clearReply();
