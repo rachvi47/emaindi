@@ -21,8 +21,9 @@
           <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
         </a>
       </header>
+      <div id="offline" hidden>No internet · showing your saved chats</div>
       <div class="search">
-        <input id="q" type="search" placeholder="Search" autocomplete="off">
+        <input id="q" type="search" placeholder="Search chats, phone number or email" autocomplete="off">
       </div>
       <div id="rows"></div>
     </aside>
@@ -47,6 +48,8 @@
   <div id="sheet" hidden></div>
   <div id="info" hidden></div>
   <div id="perm" hidden></div>
+  <div id="dlg" hidden></div>
+  <div id="toast" hidden></div>
 
   <script type="module" src="home.js"></script>
 </body>
