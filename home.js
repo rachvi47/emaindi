@@ -4,10 +4,36 @@ const $ = (s) => document.querySelector(s);
 const esc = (s = "") => String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const ms = (t) => (t && t.toMillis ? t.toMillis() : 0);
 const hm = (t) => new Date(t).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
-const online = (u) => !!(u && u.online && Date.now() - ms(u.lastActive) < 60000);
+const hidden = (u) => !!(u && u.settings && u.settings.hideOnline);
+const online = (u) => !!(u && !hidden(u) && u.online && Date.now() - ms(u.lastActive) < 60000);
+const lsFlag = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v === "1"; } catch (e) { return d; } };
+const mySet = () => (me && people[me.uid] && people[me.uid].settings) || {};
+
+/* theme from Settings (dark / light) */
+function applyTheme() {
+  let t = "light"; try { t = localStorage.getItem("theme") || "light"; } catch (e) {}
+  document.documentElement.dataset.theme = t;
+  const m = document.querySelector('meta[name="theme-color"]'); if (m) m.content = t === "dark" ? "#0b1220" : "#14213D";
+}
+applyTheme();
+addEventListener("pageshow", applyTheme);
+addEventListener("focus", applyTheme);
+addEventListener("storage", applyTheme);
+
+/* message sound from Settings */
+let actx = null;
+addEventListener("pointerdown", () => { try { actx = actx || new AudioContext(); if (actx.state === "suspended") actx.resume(); } catch (e) {} });
+function beep() {
+  if (!lsFlag("sound", true) || !actx) return;
+  try {
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = "sine"; o.frequency.value = 880; g.gain.value = 0.08;
+    o.connect(g); g.connect(actx.destination); o.start(); o.stop(actx.currentTime + 0.14);
+  } catch (e) {}
+}
 
 let me, chats = [], people = {}, contacts = {}, watching = {}, found = [];
-let friendUids = [], notifyReady = false, snapSeq = 0, cur = null, msgs = [], msgUnsub = null, replyTo = null, searchTimer, delivering = new Set(), seenAt = {};
+let presOn = false, friendUids = [], notifyReady = false, snapSeq = 0, cur = null, msgs = [], msgUnsub = null, replyTo = null, searchTimer, delivering = new Set(), seenAt = {};
 
 const peerOf = (c) => c.participants.find((u) => u !== me.uid);
 const chatId = (a, b) => [a, b].sort().join("_");
@@ -106,13 +132,15 @@ function avatar(uid, cls = "") {
   const u = people[uid] || {}, n = nameOf(uid);
   let h = 0; for (const ch of uid) h = (h * 31 + ch.charCodeAt(0)) % 360;
   const inner = u.photoUrl ? `<img src="${esc(u.photoUrl)}" alt="" referrerpolicy="no-referrer">` : esc((n[0] || "?").toUpperCase());
-  return `<div class="av ${cls}" style="background:hsl(${h} 45% 42%)">${inner}${online(u) ? '<i class="dot"></i>' : ""}</div>`;
+  return `<div class="av ${cls}" style="background:hsl(${h} 45% 42%)">${inner}${online(u) && !(me && uid === me.uid) ? '<i class="dot"></i>' : ""}</div>`;
 }
+function renderMe() { $("#meBtn").innerHTML = avatar(me.uid); }
 function watch(uid) {
   if (watching[uid]) return;
   watching[uid] = onSnapshot(doc(db, "users", uid), (s) => {
     if (!s.exists()) return;
     people[uid] = s.data({serverTimestamps: "estimate"});
+    if (me && uid === me.uid) { renderMe(); if (!presOn) { presOn = true; pres(true); } }
     renderList();
     if (cur && peerOf(cur) === uid) renderHead();
   });
@@ -120,7 +148,8 @@ function watch(uid) {
 function tick(m) {
   if (m.pending) return '<span class="tk">🕓</span>';
   const o = peerOf(cur), t = ms(m.createdAt);
-  if (ms(cur.lastRead && cur.lastRead[o]) >= t) return '<span class="tk r">✓✓</span>';
+  const noRx = mySet().noReceipts || (people[o] && people[o].settings && people[o].settings.noReceipts);
+  if (!noRx && ms(cur.lastRead && cur.lastRead[o]) >= t) return '<span class="tk r">✓✓</span>';
   if (ms(cur.deliveredAt && cur.deliveredAt[o]) >= t) return '<span class="tk">✓✓</span>';
   return '<span class="tk">✓</span>';
 }
@@ -228,7 +257,7 @@ $("#back").addEventListener("click", closeChat);
 
 function renderHead() {
   const o = peerOf(cur), u = people[o] || {};
-  const st = online(u) ? "online" : u.lastActive ? "last seen " + dayLabel(ms(u.lastActive)).toLowerCase() + " at " + hm(ms(u.lastActive)) : "";
+  const st = hidden(u) ? "" : online(u) ? "online" : u.lastActive ? "last seen " + dayLabel(ms(u.lastActive)).toLowerCase() + " at " + hm(ms(u.lastActive)) : "";
   $("#peer").innerHTML = `${avatar(o, "sm")}<div style="min-width:0"><div class="nm">${esc(nameOf(o))}</div><small>${st}</small></div>`;
 }
 $("#peer").addEventListener("click", () => cur && showInfo(peerOf(cur)));
@@ -272,6 +301,10 @@ function markRead() {
   if (!cur || document.hidden) return;
   const last = msgs[msgs.length - 1];
   const need = (cur.unread && cur.unread[me.uid] > 0) || (last && last.senderId !== me.uid && !last.pending && ms(last.createdAt) > ms(cur.lastRead && cur.lastRead[me.uid]));
+  if (mySet().noReceipts) {
+    if (cur.unread && cur.unread[me.uid] > 0) updateDoc(doc(db, "chats", cur.id), {["unread." + me.uid]: 0}).catch(console.error);
+    return;
+  }
   if (need) updateDoc(doc(db, "chats", cur.id), {["lastRead." + me.uid]: serverTimestamp(), ["unread." + me.uid]: 0}).catch(console.error);
 }
 function markDelivered() {
@@ -285,7 +318,7 @@ function markDelivered() {
 }
 $("#send").addEventListener("click", send);
 $("#txt").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey && !/Mobi|Android/i.test(navigator.userAgent)) { e.preventDefault(); send(); }
+  if (e.key === "Enter" && !e.shiftKey && lsFlag("enterSend", true)) { e.preventDefault(); send(); }
 });
 $("#txt").addEventListener("input", grow);
 function grow() { const t = $("#txt"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 120) + "px"; }
@@ -315,9 +348,10 @@ $("#msgs").addEventListener("click", (e) => {
 
 /* ---------- contact info ---------- */
 function showInfo(uid) {
-  const p = $("#info"), u = people[uid] || {};
+  const p = $("#info"), u = people[uid] || {}, mine = uid === me.uid;
   p.innerHTML = `<div class="box">${avatar(uid, "big")}<h2>${esc(nameOf(uid))}</h2><div class="num">${esc(u.phone || u.email || "")}</div>
-    <button class="btn" data-a="name">${contacts[uid] ? "Edit contact name" : "Save to contacts"}</button><button class="btn ghost" data-a="x">Close</button></div>`;
+    ${u.bio ? `<div class="bio"><small>About</small>${esc(u.bio)}</div>` : ""}
+    ${mine ? '<button class="btn" data-a="edit">Edit profile</button>' : `<button class="btn" data-a="name">${contacts[uid] ? "Edit contact name" : "Save to contacts"}</button>`}<button class="btn ghost" data-a="x">Close</button></div>`;
   p.hidden = false;
   p.onclick = async (e) => {
     const a = e.target.dataset.a;
@@ -326,6 +360,7 @@ function showInfo(uid) {
       if (n && n.trim()) await setDoc(doc(db, "users", me.uid, "contacts", uid), {name: n.trim()});
       return showInfo(uid);
     }
+    if (a === "edit") return (location.href = "settings.html");
     if (a === "x" || e.target === p) p.hidden = true;
   };
 }
@@ -414,6 +449,7 @@ function notifyNew() {
     seenAt[c.id] = t;
     if (t <= prev || !c.lastSender || c.lastSender === me.uid) continue;
     if (!(c.unread && c.unread[me.uid] > 0)) continue;
+    beep();
     if (!document.hidden && cur && cur.id === c.id) continue;
     showNotif(c);
   }
@@ -424,7 +460,7 @@ function notifyNew() {
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch((e) => console.warn("Service worker:", e));
 
 /* ---------- start-up + online presence ---------- */
-const pres = (on) => setDoc(doc(db, "users", me.uid), {online: on, lastActive: serverTimestamp()}, {merge: true}).catch(() => {});
+const pres = (on) => setDoc(doc(db, "users", me.uid), mySet().hideOnline ? {online: false} : {online: on, lastActive: serverTimestamp()}, {merge: true}).catch(() => {});
 
 onAuthStateChanged(auth, (user) => {
   if (!user) return location.replace("login.html");
@@ -432,7 +468,7 @@ onAuthStateChanged(auth, (user) => {
   me = user;
   keysP = initKeys().catch((e) => { console.error("Key setup failed:", e); alert("Could not set up encryption on this browser."); });
   setDoc(doc(db, "users", me.uid), {uid: me.uid, email: (me.email || "").toLowerCase(), phone: me.phoneNumber || ""}, {merge: true}).catch(() => {});
-  pres(true);
+  watch(me.uid);
   loadFriends();
   if (!localStorage.getItem("perm-seen")) setTimeout(showPerm, 900);
   setInterval(() => { if (!document.hidden) pres(true); }, 25000);
