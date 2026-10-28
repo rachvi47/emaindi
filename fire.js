@@ -22,7 +22,16 @@ import {
   doc,
   getDoc,
   setDoc,
+  updateDoc,
+  addDoc,
+  collection,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
+  getDocs,
   serverTimestamp,
+  increment,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 // >>> KEEP YOUR OWN VALUES HERE <<<
@@ -62,5 +71,14 @@ export {
   doc,
   getDoc,
   setDoc,
+  updateDoc,
+  addDoc,
+  collection,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
+  getDocs,
   serverTimestamp,
+  increment,
 };
