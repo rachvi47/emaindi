@@ -132,7 +132,7 @@ function counts() { $("#nc").textContent = $("#name").value.length + "/25"; $("#
 const setSw = (el, on) => el.querySelector(".sw").classList.toggle("on", on);
 
 onAuthStateChanged(auth, async (user) => {
-  if (!user) return location.replace("login.html");
+  if (!user) { setTimeout(() => { if (!auth.currentUser) location.replace("login.html"); }, 2500); return; }
   me = user; ref = doc(db, "users", me.uid);
   let d = {};
   try { const s = await getDoc(ref); d = s.exists() ? s.data() : {}; } catch (e) { console.error(e); }
