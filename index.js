@@ -1,5 +1,5 @@
 const MIN_SPLASH_MS = 2000;
-const FIREBASE_TIMEOUT_MS = 4000;
+const FIREBASE_TIMEOUT_MS = 10000; // slow phones can take a while to restore the saved login
 
 window.__redirecting = true; // tells the safety net in index.html that this script loaded
 
@@ -8,11 +8,13 @@ window.__redirecting = true; // tells the safety net in index.html that this scr
   let user = null;
 
   try {
-    const { auth, onAuthStateChanged } = await import("fire.js");
+    const { auth } = await import("./fire.js");
     user = await Promise.race([
-      new Promise((resolve) => {
-        const stop = onAuthStateChanged(auth, (u) => { stop(); resolve(u); });
-      }),
+      (async () => {
+        // wait until Firebase has finished restoring the saved login, then read it
+        if (auth.authStateReady) await auth.authStateReady();
+        return auth.currentUser;
+      })(),
       new Promise((resolve) => setTimeout(() => resolve(null), FIREBASE_TIMEOUT_MS)),
     ]);
   } catch (err) {
