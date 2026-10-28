@@ -8,12 +8,14 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@800&family=DM+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem("theme")||"light"}catch(e){}</script>
   <link rel="stylesheet" href="home.css">
 </head>
 <body>
   <div id="app">
     <aside id="list">
       <header class="top">
+        <button class="dots" id="meBtn" aria-label="My profile"></button>
         <h1 class="logo">emaindi</h1>
         <button class="dots" id="permBtn" aria-label="Contacts and permissions">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="8" r="4"/><path d="M1 20c0-3.5 3.6-6 8-6s8 2.5 8 6z"/><path d="M19 8v3h-3v2h3v3h2v-3h3v-2h-3V8z"/></svg>
