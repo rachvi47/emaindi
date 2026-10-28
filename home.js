@@ -1,4 +1,4 @@
-import {auth,db,onAuthStateChanged,doc,getDoc,setDoc,updateDoc,addDoc,collection,query,where,orderBy,onSnapshot,getDocs,serverTimestamp,increment} from "fire.js";
+import {auth,db,onAuthStateChanged,doc,getDoc,setDoc,updateDoc,addDoc,collection,query,where,orderBy,onSnapshot,getDocs,serverTimestamp,increment} from "./fire.js";
 
 const $ = (s) => document.querySelector(s);
 const esc = (s = "") => String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -248,5 +248,3 @@ onAuthStateChanged(auth, (user) => {
     markDelivered(); renderList();
   }, console.error);
 });
-
-
