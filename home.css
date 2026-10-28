@@ -75,7 +75,21 @@ body.chat-open #chat{display:flex}
 #info .num{color:var(--soft)}
 .btn{margin-top:.8rem;padding:.7rem 1.2rem;border-radius:2rem;background:var(--navy);color:#fff;font-weight:700}
 .btn.ghost{background:none;color:var(--navy)}
+#perm{position:fixed;inset:0;background:rgba(20,33,61,.5);display:flex;align-items:flex-end;justify-content:center;z-index:12}
+#perm .box{width:min(100%,26rem);background:#fff;border-radius:1.2rem 1.2rem 0 0;padding:1.2rem;padding-bottom:max(1.2rem,env(safe-area-inset-bottom));max-height:90dvh;overflow-y:auto}
+#perm h2{margin:0 0 .2rem}
+#perm .sub{color:var(--soft);margin:0 0 .6rem;font-size:.9rem}
+.pr{display:flex;align-items:center;gap:.8rem;padding:.8rem 0;border-top:1px solid var(--line)}
+.pr .pi{font-size:1.5rem;flex:none}
+.pr .tx{flex:1;min-width:0}
+.pr .tx b{display:block}
+.pr .tx small{color:var(--soft)}
+.pr .go{flex:none;padding:.5rem 1rem;border-radius:2rem;background:var(--navy);color:#fff;font-weight:700;font-size:.85rem}
+.pr .ok{flex:none;color:#1a8f4a;font-weight:700;font-size:.85rem}
+.pr .na{flex:none;color:var(--soft);font-size:.8rem}
 @media(min-width:820px){
+#perm{align-items:center}
+#perm .box{border-radius:1.2rem}
 #list{width:24rem;flex:none}
 #chat,body.chat-open #chat{display:flex}
 body.chat-open #list{display:flex}
