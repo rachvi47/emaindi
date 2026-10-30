@@ -106,25 +106,33 @@ async function askNewPin() {
   }
 }
 
+let oldKeys = [], keyProblem = "";
 async function initKeys() {
   if (!(window.crypto && crypto.subtle)) throw new Error("Encryption needs a secure (https) page");
-  const uref = doc(db, "users", me.uid), bref = doc(db, "users", me.uid, "private", "keybackup");
+  const uref = doc(db, "users", me.uid), bref = doc(db, "users", me.uid, "contacts", "_keybackup");
+  oldKeys = (await idbGet("old:" + me.uid)) || [];
+  const keepOld = async (p) => { if (p) { oldKeys = [...oldKeys, p]; await idbSet("old:" + me.uid, oldKeys); } };
   let local = await idbGet("pair:" + me.uid);
   const legacy = local; if (local && !local.privateKey.extractable) local = null;   // older key that cannot be backed up
-  let udata = {}, backup = null, known = true;
-  try { udata = (await getDoc(uref)).data() || {}; const b = await getDoc(bref); backup = b.exists() ? b.data() : null; }
-  catch (e) { known = false; console.warn("Key backup check failed:", e.code || e); }
+  let udata = {}, backup = null, known = true, failCode = "";
+  try {
+    udata = (await getDoc(uref)).data() || {};
+    const b = await getDoc(bref);
+    if (b.exists()) backup = b.data();
+    else { try { const o = await getDoc(doc(db, "users", me.uid, "private", "keybackup")); if (o.exists()) backup = o.data(); } catch (e) {} }
+  } catch (e) { known = false; failCode = e.code || String(e); console.warn("Key backup check failed:", failCode); }
 
-  if (!known) {                                   // offline: use whatever key this phone already has
+  if (!known) {                                   // offline or blocked: use whatever key this phone already has
     if (local || legacy) { myKeys = local || legacy; return; }
-    throw new Error("Connect to the internet once to set up encryption");
+    throw new Error(failCode === "permission-denied" ? "Firestore rules block reading your key backup" : "Connect to the internet once to set up encryption");
   }
-  if (local && backup && udata.publicKey && !samePub(await pubOf(local), udata.publicKey)) local = null;   // another device took over
+  if (local && backup && udata.publicKey && !samePub(await pubOf(local), udata.publicKey)) { await keepOld(local); local = null; }   // another device took over
   if (local && backup) {
     myKeys = local;
     if (!udata.publicKey) await setDoc(uref, {publicKey: await pubOf(local)}, {merge: true});
     return;
   }
+  if (!local && legacy) await keepOld(legacy);    // keep the old key so older messages can still be opened
   if (!local && backup && udata.publicKey) {      // new phone / reinstall / APK: unlock with the PIN
     const pub = await crypto.subtle.importKey("jwk", JSON.parse(udata.publicKey), ECDH, true, []);
     for (;;) {
@@ -140,8 +148,10 @@ async function initKeys() {
   // first time (or an older key with no backup): make a key and lock a copy with a PIN
   const pair = local || await crypto.subtle.generateKey(ECDH, true, ["deriveKey"]);
   const pin = await askNewPin();
-  await setDoc(bref, await wrapPrivate(pair, pin));
-  await setDoc(uref, {publicKey: await pubOf(pair)}, {merge: true});
+  try { await setDoc(bref, await wrapPrivate(pair, pin)); }
+  catch (e) { throw new Error("Could not save the key backup (" + (e.code || e.message) + ")"); }
+  const newPub = await pubOf(pair), prev = udata.publicKey;
+  await setDoc(uref, prev && !samePub(prev, newPub) ? {publicKey: newPub, oldPublicKeys: arrayUnion(prev)} : {publicKey: newPub}, {merge: true});
   await idbSet("pair:" + me.uid, pair);
   myKeys = pair;
 }
@@ -169,16 +179,26 @@ async function encryptText(uid, text) {
   const ct = await crypto.subtle.encrypt({name: "AES-GCM", iv}, key, te.encode(text));
   return "e2e:1:" + toB64(iv) + ":" + toB64(ct);
 }
+async function tryDecrypt(priv, pubStr, iv, ct) {
+  const pub = await crypto.subtle.importKey("jwk", JSON.parse(pubStr), ECDH, false, []);
+  const key = await crypto.subtle.deriveKey({name: "ECDH", public: pub}, priv, {name: "AES-GCM", length: 256}, false, ["decrypt"]);
+  return td.decode(await crypto.subtle.decrypt({name: "AES-GCM", iv}, key, ct));
+}
 async function decryptText(uid, s) {
   if (typeof s !== "string" || !s.startsWith("e2e:")) return s || "";   // old unencrypted messages
   const ck = uid + s;
   if (plainCache.has(ck)) return plainCache.get(ck);
-  let out;
-  try {
-    const [, , iv, ct] = s.split(":");
-    out = td.decode(await crypto.subtle.decrypt({name: "AES-GCM", iv: fromB64(iv)}, await sharedKey(uid), fromB64(ct)));
-    plainCache.set(ck, out);
-  } catch (e) { out = "🔒 Message can't be decrypted on this device"; }
+  const [, , ivs, cts] = s.split(":"), iv = fromB64(ivs), ct = fromB64(cts);
+  let out = null;
+  try { out = td.decode(await crypto.subtle.decrypt({name: "AES-GCM", iv}, await sharedKey(uid), ct)); } catch (e) {}
+  if (out === null && myKeys) {                 // try older keys (either side changed its key since)
+    const p = people[uid] || {};
+    const pubs = [p.publicKey, ...(p.oldPublicKeys || [])].filter(Boolean);
+    const privs = [myKeys.privateKey, ...oldKeys.map((k) => k.privateKey)].filter(Boolean);
+    for (const pv of privs) { for (const pb of pubs) { try { out = await tryDecrypt(pv, pb, iv, ct); break; } catch (e) {} } if (out !== null) break; }
+  }
+  if (out === null) return myKeys ? "🔒 Message can't be decrypted on this device" : "🔒 Chat key not loaded" + (keyProblem ? " (" + keyProblem + ")" : "");
+  plainCache.set(ck, out);
   return out;
 }
 const pvCache = new Map();
@@ -215,7 +235,9 @@ function watch(uid) {
   if (watching[uid]) return;
   watching[uid] = onSnapshot(doc(db, "users", uid), (s) => {
     if (!s.exists()) return;
+    const prevPk = people[uid] && people[uid].publicKey;
     people[uid] = s.data({serverTimestamps: "estimate"});
+    if (prevPk !== people[uid].publicKey) { delete sharedKeys[uid]; pvCache.clear(); redecrypt(uid); }
     if (me && uid === me.uid) { renderMe(); if (!presOn) { presOn = true; pres(true); } }
     renderList();
     if (cur && peerOf(cur) === uid) renderHead();
@@ -284,6 +306,19 @@ async function findUsers() {
 
 /* ---------- open a chat ---------- */
 const msgCache = {};   // decrypted messages kept in memory, so re-opening a chat is instant
+const rawCache = {};   // messages as stored (encrypted), kept so they can be decrypted again if a key arrives late
+async function decodeAndShow(id, peer) {
+  const raw = rawCache[id] || [], seq = ++snapSeq;
+  const out = await Promise.all(raw.map(async (m) => ({
+    ...m,
+    text: await decryptText(peer, m.text),
+    replyTo: m.replyTo ? {...m.replyTo, text: await decryptText(peer, m.replyTo.text)} : null,
+  })));
+  if (seq !== snapSeq || !cur || cur.id !== id) return;
+  msgs = msgCache[id] = out;
+  renderMsgs(); markRead();
+}
+function redecrypt(uid) { if (cur && (!uid || peerOf(cur) === uid)) decodeAndShow(cur.id, peerOf(cur)); }
 async function openChat(uid) {
   if (uid === me.uid) return;
   watch(uid);
@@ -312,19 +347,11 @@ async function openChat(uid) {
     if (!cur || cur.id !== id) return;
   }
   const peer = uid;
-  msgUnsub = onSnapshot(query(collection(db, "chats", id, "messages"), orderBy("createdAt")), async (s) => {
-    const raw = s.docs.map((d) => ({id: d.id, pending: d.metadata.hasPendingWrites, ...d.data({serverTimestamps: "estimate"})}))
+  msgUnsub = onSnapshot(query(collection(db, "chats", id, "messages"), orderBy("createdAt")), (s) => {
+    rawCache[id] = s.docs.map((d) => ({id: d.id, pending: d.metadata.hasPendingWrites, ...d.data({serverTimestamps: "estimate"})}))
       .filter((m) => !(m.deletedFor || []).includes(me.uid))          // "delete for me"
       .filter((m) => ms(m.createdAt) > ms(cur && cur.deletedAt && cur.deletedAt[me.uid]));   // after "delete chat"
-    const seq = ++snapSeq;
-    const out = await Promise.all(raw.map(async (m) => ({
-      ...m,
-      text: await decryptText(peer, m.text),
-      replyTo: m.replyTo ? {...m.replyTo, text: await decryptText(peer, m.replyTo.text)} : null,
-    })));
-    if (seq !== snapSeq || !cur || cur.id !== id) return;
-    msgs = msgCache[id] = out;
-    renderMsgs(); markRead();
+    decodeAndShow(id, peer);
   }, console.error);
   if (!/Mobi|Android/i.test(navigator.userAgent)) $("#txt").focus();
 }
@@ -610,7 +637,7 @@ function saveCache() {
   saveT = setTimeout(() => {
     if (!me || me.cached) return;
     const ids = new Set([me.uid, ...chats.map(peerOf)]), pp = {};
-    ids.forEach((u) => { const p = people[u]; if (p) pp[u] = {uid: p.uid, name: p.name, phone: p.phone, email: p.email, photoUrl: p.photoUrl, bio: p.bio, settings: p.settings, publicKey: p.publicKey, lastActive: ms(p.lastActive)}; });
+    ids.forEach((u) => { const p = people[u]; if (p) pp[u] = {uid: p.uid, name: p.name, phone: p.phone, email: p.email, photoUrl: p.photoUrl, bio: p.bio, settings: p.settings, publicKey: p.publicKey, oldPublicKeys: p.oldPublicKeys, lastActive: ms(p.lastActive)}; });
     const cs = chats.filter((c) => c.lastMessage).slice(0, 60).map((c) => ({id: c.id, participants: c.participants, lastMessage: c.lastMessage, lastMessageAt: ms(c.lastMessageAt), lastSender: c.lastSender || "", unread: c.unread || {}, lastRead: packMs(c.lastRead), deliveredAt: packMs(c.deliveredAt), deletedAt: packMs(c.deletedAt)}));
     idbSet("cache:" + me.uid, {chats: cs, people: pp, contacts}).catch(() => {});
   }, 800);
@@ -641,8 +668,12 @@ onAuthStateChanged(auth, (user) => {
   started = true;
   me = user;
   try { localStorage.setItem("lastUid", user.uid); } catch (e) {}
-  keysP = initKeys().catch((e) => { console.error("Key setup failed:", e); toast("Encryption setup problem: " + (e.message || e)); });
-  keysP.then(() => { pvCache.clear(); renderList(); });
+  const loadKeys = () => {
+    keysP = initKeys().catch((e) => { keyProblem = e.message || String(e); console.error("Key setup failed:", e); toast("Encryption setup problem: " + keyProblem); });
+    keysP.then(() => { if (myKeys) keyProblem = ""; plainCache.clear(); pvCache.clear(); renderList(); redecrypt(); });
+  };
+  loadKeys();
+  addEventListener("online", () => { if (!myKeys) loadKeys(); });
   setDoc(doc(db, "users", me.uid), {uid: me.uid, email: (me.email || "").toLowerCase(), phone: me.phoneNumber || ""}, {merge: true}).catch(() => {});
   watch(me.uid);
   try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
@@ -653,7 +684,7 @@ onAuthStateChanged(auth, (user) => {
   addEventListener("pagehide", () => pres(false));
 
   onSnapshot(collection(db, "users", me.uid, "contacts"), (s) => {
-    contacts = {}; s.docs.forEach((d) => (contacts[d.id] = d.data()));
+    contacts = {}; s.docs.forEach((d) => { if (d.id !== "_keybackup") contacts[d.id] = d.data(); });
     renderList(); cur && (renderHead(), renderMsgs());
   });
   onSnapshot(query(collection(db, "chats"), where("participants", "array-contains", me.uid)), (s) => {
