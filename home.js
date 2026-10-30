@@ -51,7 +51,7 @@ function beep() {
 }
 
 let me, chats = [], people = {}, contacts = {}, watching = {}, found = [];
-let presOn = false, notifyReady = false, snapSeq = 0, cur = null, msgs = [], msgUnsub = null, replyTo = null, searchTimer, delivering = new Set(), seenAt = {};
+let lockView = false, lockOpen = false, presOn = false, notifyReady = false, snapSeq = 0, cur = null, msgs = [], msgUnsub = null, replyTo = null, searchTimer, delivering = new Set(), seenAt = {};
 
 const peerOf = (c) => c.participants.find((u) => u !== me.uid);
 const chatId = (a, b) => [a, b].sort().join("_");
@@ -63,6 +63,7 @@ const numberOf = (uid) => (people[uid] && (people[uid].phone || people[uid].emai
    Each device makes a key pair. The private key never leaves this browser (IndexedDB).
    The public key is saved in users/{uid}.publicKey. Message text is stored in Firestore
    only as "e2e:1:<iv>:<ciphertext>", so nobody reading the database can see it. */
+const E2EE = false;   // encryption is switched OFF for now (set to true to turn it back on)
 const te = new TextEncoder(), td = new TextDecoder();
 const toB64 = (buf) => { let s = ""; for (const b of new Uint8Array(buf)) s += String.fromCharCode(b); return btoa(s); };
 const fromB64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
@@ -175,6 +176,7 @@ async function sharedKey(uid) {
   return key;
 }
 async function encryptText(uid, text) {
+  if (!E2EE) return text;
   const key = await sharedKey(uid), iv = crypto.getRandomValues(new Uint8Array(12));
   const ct = await crypto.subtle.encrypt({name: "AES-GCM", iv}, key, te.encode(text));
   return "e2e:1:" + toB64(iv) + ":" + toB64(ct);
@@ -197,7 +199,7 @@ async function decryptText(uid, s) {
     const privs = [myKeys.privateKey, ...oldKeys.map((k) => k.privateKey)].filter(Boolean);
     for (const pv of privs) { for (const pb of pubs) { try { out = await tryDecrypt(pv, pb, iv, ct); break; } catch (e) {} } if (out !== null) break; }
   }
-  if (out === null) return myKeys ? "🔒 Message can't be decrypted on this device" : "🔒 Chat key not loaded" + (keyProblem ? " (" + keyProblem + ")" : "");
+  if (out === null) return !E2EE ? "🔒 Encrypted message (encryption is switched off)" : myKeys ? "🔒 Message can't be decrypted on this device" : "🔒 Chat key not loaded" + (keyProblem ? " (" + keyProblem + ")" : "");
   plainCache.set(ck, out);
   return out;
 }
@@ -256,11 +258,15 @@ function tick(m) {
 function renderList() {
   if (typeof saveCache === "function") saveCache();
   const q = $("#q").value.trim().toLowerCase();
-  const rows = chats.filter(visibleChat).filter((c) => {
+  const lockedSet = new Set(lockedIds());
+  const rows = chats.filter(visibleChat).filter((c) => (lockView ? lockedSet.has(c.id) : !lockedSet.has(c.id))).filter((c) => {
     const o = peerOf(c), p = people[o] || {};
     return !q || [nameOf(o), p.phone, p.email].join(" ").toLowerCase().includes(q);
   });
   let h = "";
+  if (lockView) h += lockHeaderRows();
+  else if (!q) { const n = chats.filter((c) => visibleChat(c) && lockedSet.has(c.id)).length; if (n) h += lockFolderRow(n); }
+  if (lockView && !rows.length) h += '<div class="none">No locked chats yet. Long-press a chat and choose “Lock chat”.</div>';
   const fresh = found.filter((u) => u.uid !== me.uid);
   if (q && fresh.length) h += '<div class="sec">On emaindi</div>' + fresh.map((u) => `<button class="row" data-uid="${u.uid}">${avatar(u.uid)}<div class="meta"><div class="nm">${esc(nameOf(u.uid))}</div><div class="pv">${esc(u.phone || u.email)}</div></div></button>`).join("");
   if (rows.length) {
@@ -277,6 +283,8 @@ function renderList() {
 }
 $("#rows").addEventListener("click", (e) => {
   if (lpFired) { lpFired = false; return; }
+  const lk = e.target.closest("[data-lk]");
+  if (lk) return lockAction(lk.dataset.lk);
   const r = e.target.closest(".row");
   if (r) openChat(r.dataset.uid).catch((err) => { console.error("openChat failed:", err); toast("Could not open chat: " + (err.code || err.message)); });
 });
@@ -321,6 +329,7 @@ async function decodeAndShow(id, peer) {
 function redecrypt(uid) { if (cur && (!uid || peerOf(cur) === uid)) decodeAndShow(cur.id, peerOf(cur)); }
 async function openChat(uid) {
   if (uid === me.uid) return;
+  if (isLocked(chatId(me.uid, uid)) && !lockOpen && !(await askUnlock())) return;
   watch(uid);
   const id = chatId(me.uid, uid), ref = doc(db, "chats", id), known = chats.some((c) => c.id === id);
   cur = chats.find((c) => c.id === id) || {id, participants: [me.uid, uid].sort(), unread: {}, lastRead: {}, deliveredAt: {}};
@@ -463,6 +472,99 @@ $("#txt").addEventListener("blur", stopTyping);
 
 function grow() { const t = $("#txt"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 120) + "px"; }
 
+/* ---------- chat lock: hide chats behind a PIN, like WhatsApp ---------- */
+const lockKey = (k) => k + ":" + me.uid;
+function lsGet(k, d) { try { const v = JSON.parse(localStorage.getItem(lockKey(k))); return v === null || v === undefined ? d : v; } catch (e) { return d; } }
+function lsSet(k, v) { try { localStorage.setItem(lockKey(k), JSON.stringify(v)); } catch (e) {} }
+function lockedIds() { return me ? lsGet("locked", []) : []; }
+function isLocked(id) { return lockedIds().includes(id); }
+function lockRow(act, icon, title, sub) { return `<button class="row" data-lk="${act}"><div class="av" style="background:#14213D;color:#fff">${icon}</div><div class="meta"><div class="nm">${title}</div><div class="pv">${sub}</div></div></button>`; }
+function lockFolderRow(n) { return lockRow("open", "🔒", "Locked chats", n + (n === 1 ? " chat" : " chats")); }
+function lockHeaderRows() { return lockRow("back", "←", "Locked chats", "Tap to go back") + lockRow("pin", "🔑", "Change lock PIN", ""); }
+
+async function pinHash(pin, salt) {
+  if (window.crypto && crypto.subtle) {
+    const base = await crypto.subtle.importKey("raw", te.encode(pin), "PBKDF2", false, ["deriveBits"]);
+    return toB64(await crypto.subtle.deriveBits({name: "PBKDF2", salt: fromB64(salt), iterations: 150000, hash: "SHA-256"}, base, 256));
+  }
+  let h = 5381; for (const ch of salt + pin) h = ((h << 5) + h + ch.charCodeAt(0)) | 0;   // fallback if the page is not https
+  return String(h);
+}
+async function newPinRecord() {
+  for (;;) {
+    const p1 = await dialog({title: "Create chat lock PIN", text: "Locked chats are hidden in a “Locked chats” folder and need this PIN to open. Use at least 4 characters. Forgot it? Log out and log in again to reset it.", input: "password", ok: "Next"});
+    if (p1 === null) return null;
+    if (p1.length < 4) { toast("Use at least 4 characters."); continue; }
+    const p2 = await dialog({title: "Repeat the PIN", input: "password", ok: "Save"});
+    if (p2 === null) return null;
+    if (p2 !== p1) { toast("The two PINs do not match."); continue; }
+    const salt = toB64(crypto.getRandomValues(new Uint8Array(16)));
+    return {salt, hash: await pinHash(p1, salt)};
+  }
+}
+async function ensureLockPin() {
+  if (lsGet("lockpin", null)) return true;
+  const rec = await newPinRecord();
+  if (!rec) return false;
+  lsSet("lockpin", rec); return true;
+}
+let lockFails = 0, needRelock = false;
+async function askUnlock(cover) {
+  const rec = lsGet("lockpin", null);
+  if (!rec) return true;
+  const d = $("#dlg");
+  try {
+    for (;;) {
+      if (cover) d.style.background = "#0b1220";          // hide the chat behind the PIN box
+      const p = await dialog({title: "Enter chat lock PIN", text: "Forgot it? Log out and log in again to reset chat lock.", input: "password", ok: "Unlock"});
+      if (p === null) return false;
+      if ((await pinHash(p, rec.salt)) === rec.hash) { lockFails = 0; lockOpen = true; return true; }
+      if (++lockFails >= 5) { lockFails = 0; toast("Too many wrong tries. Try again later."); return false; }
+      toast("Wrong PIN.");
+    }
+  } finally { d.style.background = ""; }
+}
+async function changeLockPin() {
+  if (!(await askUnlock())) return;
+  const rec = await newPinRecord();
+  if (rec) { lsSet("lockpin", rec); toast("Lock PIN changed."); }
+}
+function leaveLockView() {
+  if (!lockView) return;
+  if (history.state && history.state.lock) history.back();
+  else { lockView = false; lockOpen = false; renderList(); }
+}
+async function lockAction(a) {
+  if (a === "open") {
+    if (!lockOpen && !(await askUnlock())) return;
+    history.pushState({lock: 1}, ""); lockView = true; lockOpen = true; renderList();
+  }
+  if (a === "back") leaveLockView();
+  if (a === "pin") await changeLockPin();
+}
+async function toggleLock(uid) {
+  const id = chatId(me.uid, uid), set = lockedIds();
+  if (set.includes(id)) {
+    if (!lockOpen && !(await askUnlock())) return;
+    lsSet("locked", set.filter((x) => x !== id)); toast("Chat unlocked.");
+  } else {
+    if (!(await ensureLockPin())) return;
+    lsSet("locked", [...set, id]);
+    if (cur && cur.id === id) closeChat();
+    toast("Chat locked. Find it under “Locked chats” at the top of your list.");
+  }
+  renderList();
+}
+// ask for the PIN again when you come back to the app while a locked chat / the folder was open
+document.addEventListener("visibilitychange", async () => {
+  if (document.hidden) { needRelock = lockView || (cur && isLocked(cur.id)); lockOpen = false; return; }
+  if (!needRelock) return;
+  needRelock = false;
+  if (await askUnlock(true)) return;
+  if (cur && isLocked(cur.id)) closeChat();
+  setTimeout(leaveLockView, 300);
+});
+
 /* ---------- delete a chat from the recent list (long-press / right-click), like WhatsApp ---------- */
 let lpTimer = null, lpFired = false, lpX = 0, lpY = 0;
 const rowsEl = $("#rows");
@@ -478,12 +580,13 @@ rowsEl.addEventListener("contextmenu", (e) => { const r = e.target.closest(".row
 function chatMenu(uid) {
   const s = $("#sheet");
   if (!s.hidden) return;
-  s.innerHTML = `<div class="box"><button data-a="del" class="danger">Delete chat</button><button data-a="x">Cancel</button></div>`;
+  s.innerHTML = `<div class="box"><button data-a="lock">${isLocked(chatId(me.uid, uid)) ? "Unlock chat" : "Lock chat"}</button><button data-a="del" class="danger">Delete chat</button><button data-a="x">Cancel</button></div>`;
   openModal(s);
   s.onclick = (ev) => {
     const a = ev.target.dataset.a;
     if (!a && ev.target !== s) return;
     closeModal(s);
+    if (a === "lock") setTimeout(() => toggleLock(uid), 250);
     if (a === "del") setTimeout(() => deleteChat(uid), 250);
   };
 }
@@ -548,7 +651,7 @@ function showInfo(uid) {
   const p = $("#info"), u = people[uid] || {}, mine = uid === me.uid;
   p.innerHTML = `<div class="box">${avatar(uid, "big")}<h2>${esc(nameOf(uid))}</h2><div class="num">${esc(u.phone || u.email || "")}</div>
     ${u.bio ? `<div class="bio"><small>About</small>${esc(u.bio)}</div>` : ""}
-    ${mine ? '<button class="btn" data-a="edit">Edit profile</button>' : `<button class="btn" data-a="name">${contacts[uid] ? "Edit contact name" : "Save to contacts"}</button>`}${!mine && chats.some((c) => c.id === chatId(me.uid, uid) && visibleChat(c)) ? '<button class="btn ghost danger" data-a="delchat">Delete chat</button>' : ""}<button class="btn ghost" data-a="x">Close</button></div>`;
+    ${mine ? '<button class="btn" data-a="edit">Edit profile</button>' : `<button class="btn" data-a="name">${contacts[uid] ? "Edit contact name" : "Save to contacts"}</button>`}${!mine && chats.some((c) => c.id === chatId(me.uid, uid) && visibleChat(c)) ? '<button class="btn ghost danger" data-a="delchat">Delete chat</button>' : ""}${!mine && chats.some((c) => c.id === chatId(me.uid, uid) && visibleChat(c)) ? `<button class="btn ghost" data-a="lockchat">${isLocked(chatId(me.uid, uid)) ? "Unlock chat" : "Lock chat"}</button>` : ""}<button class="btn ghost" data-a="x">Close</button></div>`;
   openModal(p);
   p.onclick = async (e) => {
     const a = e.target.dataset.a;
@@ -558,6 +661,7 @@ function showInfo(uid) {
       return showInfo(uid);
     }
     if (a === "delchat") { closeModal(p); await new Promise((r) => setTimeout(r, 250)); return deleteChat(uid); }
+    if (a === "lockchat") { closeModal(p); await new Promise((r) => setTimeout(r, 250)); return toggleLock(uid); }
     if (a === "edit") return (location.href = "settings.html");
     if (a === "x" || e.target === p) closeModal(p);
   };
@@ -592,9 +696,10 @@ async function showPerm() {
 async function showNotif(c) {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
   const o = peerOf(c);
+  const locked = isLocked(c.id);
   let body = "New message";
-  try { body = (await decryptText(o, c.lastMessage)) || body; } catch (e) {}
-  const title = nameOf(o), opts = {body, tag: c.id, renotify: true};
+  if (!locked) { try { body = (await decryptText(o, c.lastMessage)) || body; } catch (e) {} }
+  const title = locked ? "emaindi" : nameOf(o), opts = {body, tag: c.id, renotify: true};
   try { const reg = await navigator.serviceWorker.ready; await reg.showNotification(title, opts); }
   catch (e) { try { new Notification(title, opts); } catch (_) {} }
 }
@@ -624,6 +729,7 @@ addEventListener("popstate", (e) => {
   const s = e.state || {};
   MODALS.forEach((id) => ($(id).hidden = true));
   if (!s.chat && cur) doCloseChat();
+  if (!s.lock && !s.chat && lockView) { lockView = false; lockOpen = false; renderList(); }
 });
 
 
@@ -667,8 +773,12 @@ onAuthStateChanged(auth, (user) => {
   if (started) return;
   started = true;
   me = user;
-  try { localStorage.setItem("lastUid", user.uid); } catch (e) {}
+  try {
+    if (!localStorage.getItem("lastUid")) { localStorage.removeItem("lockpin:" + user.uid); localStorage.removeItem("locked:" + user.uid); }   // new login resets chat lock
+    localStorage.setItem("lastUid", user.uid);
+  } catch (e) {}
   const loadKeys = () => {
+    if (!E2EE) { keysP = Promise.resolve(); return; }
     keysP = initKeys().catch((e) => { keyProblem = e.message || String(e); console.error("Key setup failed:", e); toast("Encryption setup problem: " + keyProblem); });
     keysP.then(() => { if (myKeys) keyProblem = ""; plainCache.clear(); pvCache.clear(); renderList(); redecrypt(); });
   };
