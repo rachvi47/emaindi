@@ -39,6 +39,14 @@ const codeInput = $("code");
 const codeHint = $("code-hint");
 const submitBtn = $("submit");
 const googleBtn = $("google");
+
+// Google refuses to sign people in inside an app WebView (like a Median.co APK), so hide the button there.
+// Email and phone sign-in still work in the app.
+if (/; wv\)|gonative|median/i.test(navigator.userAgent) || window.median || window.gonative) {
+  googleBtn.hidden = true;
+  const dv = document.querySelector(".divider");
+  if (dv) dv.hidden = true;
+}
 const message = $("message");
 
 let mode = "login";        // "login" | "signup"
