@@ -1,6 +1,6 @@
 // Service worker: keeps the app files in cache (works offline) and shows notifications.
-const CACHE = "emaindi-v2";
-const SHELL = ["./", "index.html", "index.js", "login.html", "login.js", "login-extra.css", "home.html", "home.js", "home.css", "settings.html", "style.css", "fire.js"];
+const CACHE = "emaindi-v3";
+const SHELL = ["./", "index.html", "index.js", "login.html", "login.js", "login-extra.css", "home.html", "home.js", "home.css", "chat.html", "chat.js", "chat.css", "common.js", "call.js", "settings.html", "style.css", "fire.js"];
 const CROSS = ["www.gstatic.com", "fonts.googleapis.com", "fonts.gstatic.com"];
 
 self.addEventListener("install", (e) => {
