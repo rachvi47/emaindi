@@ -24,11 +24,6 @@
         <button class="tab" role="tab" id="tab-signup" aria-selected="false" type="button">Create account</button>
       </div>
 
-      <div class="methods" role="tablist" aria-label="Use email or phone">
-        <button class="method" role="tab" id="method-email" aria-selected="true" type="button">Email</button>
-        <button class="method" role="tab" id="method-phone" aria-selected="false" type="button">Phone number</button>
-      </div>
-
       <form id="auth-form" novalidate>
         <div class="field" id="name-field" hidden>
           <label for="name">Name</label>
@@ -52,25 +47,6 @@
           </div>
         </div>
 
-        <!-- Phone number and code -->
-        <div id="phone-block" hidden>
-          <div class="field" id="phone-field">
-            <label for="phone">Phone number</label>
-            <input id="phone" type="tel" autocomplete="tel" placeholder="+91 98765 43210">
-            <p class="hint">Include the country code. There is no password: we text you a code each time you log in.</p>
-          </div>
-
-          <div class="field" id="code-field" hidden>
-            <label for="code">Verification code</label>
-            <input id="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
-            <p class="hint" id="code-hint"></p>
-            <div class="row-between">
-              <button class="link-btn" id="change-number" type="button">Change number</button>
-              <button class="link-btn" id="resend" type="button">Resend code</button>
-            </div>
-          </div>
-        </div>
-
         <p class="message" id="message" role="alert"></p>
 
         <button class="btn" id="submit" type="submit">Log in</button>
@@ -88,8 +64,22 @@
         Continue with Google
       </button>
 
-      <!-- Invisible reCAPTCHA that Firebase needs for phone sign-in -->
-      <div id="recaptcha-container"></div>
+      <!-- Shown after "Continue with Google" when the account has no password yet -->
+      <form id="pw-form" hidden novalidate>
+        <h2 class="pw-title">Create a password</h2>
+        <p class="hint">You signed in with Google. Choose a password too, so you can also log in with your email.</p>
+        <div class="field">
+          <label for="pw-new">Password</label>
+          <input id="pw-new" type="password" autocomplete="new-password" minlength="6">
+        </div>
+        <div class="field">
+          <label for="pw-confirm">Confirm password</label>
+          <input id="pw-confirm" type="password" autocomplete="new-password" minlength="6">
+        </div>
+        <p class="message" id="pw-message" role="alert"></p>
+        <button class="btn" id="pw-submit" type="submit">Save password and continue</button>
+        <div class="row-end"><button class="link-btn" id="pw-cancel" type="button">Cancel and log out</button></div>
+      </form>
     </section>
   </main>
 
