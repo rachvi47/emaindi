@@ -317,78 +317,32 @@ $("change-number").addEventListener("click", () => {
 
 /* ---------- Continue with Google ---------- */
 
-// Median (and the older GoNative) inject a JS bridge into the app's WebView.
-function getNativeGoogle() {
-  const bridge = window.median || window.gonative;
-  return bridge && bridge.socialLogin && bridge.socialLogin.google
-    ? bridge.socialLogin.google
-    : null;
-}
-
-function nativeError(message) {
-  const e = new Error(message);
-  e.code = "google/native-failed";
-  return e;
-}
-
-// Opens the native Google account picker and resolves with a Google ID token.
-function nativeGoogleLogin(api) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-
-    const handle = (res) => {
-      if (settled) return;
-      settled = true;
-      delete window.__googleLoginCallback;
-
-      const data = typeof res === "string" ? safeParse(res) : res;
-      const idToken = data && (data.idToken || data.id_token);
-
-      if (idToken) return resolve(idToken);
-      if (data && (data.error === "cancelled" || data.cancelled)) {
-        const e = new Error("cancelled");
-        e.code = "auth/popup-closed-by-user";
-        return reject(e);
-      }
-      reject(nativeError((data && (data.error || data.message)) || "Google sign-in failed. Try again."));
-    };
-
-    window.__googleLoginCallback = handle;
-
-    try {
-      // Median accepts a callback name and also returns a promise in newer versions.
-      const result = api.login({ callback: "__googleLoginCallback" });
-      if (result && typeof result.then === "function") result.then(handle, (err) => {
-        if (settled) return;
-        settled = true;
-        reject(nativeError(err && err.message));
-      });
-    } catch (err) {
-      settled = true;
-      reject(nativeError(err && err.message));
-    }
-  });
-}
-
-function safeParse(text) {
-  try { return JSON.parse(text); } catch (_) { return null; }
-}
-
 googleBtn.addEventListener("click", async () => {
   busy = true;
   setLoading(true);
   show("");
   try {
+    const m = window.median || window.gonative;
+    const inApp = !!m || /median|gonative/i.test(navigator.userAgent);
     let cred;
-    const native = getNativeGoogle();
 
-    if (native) {
-      // Inside the Android app: native sign-in, then hand the token to Firebase.
-      const idToken = await nativeGoogleLogin(native);
+    if (inApp) {
+      if (!m || !m.socialLogin || !m.socialLogin.google) {
+        throw new Error("Median Google plugin not found. Enable Google Sign-In in App Studio and rebuild the APK.");
+      }
+
+      const data = await m.socialLogin.google.login();
+      // Debug: shows exactly what Median returned. Remove once it works.
+      show("Median replied: " + JSON.stringify(data), "ok");
+
+      const idToken = data && (data.idToken || data.id_token);
+      if (!idToken) {
+        throw new Error("No idToken from Median: " + JSON.stringify(data));
+      }
+
       const credential = GoogleAuthProvider.credential(idToken);
       cred = await signInWithCredential(auth, credential);
     } else {
-      // Normal browser: regular popup.
       cred = await signInWithPopup(auth, new GoogleAuthProvider());
     }
 
@@ -398,10 +352,9 @@ googleBtn.addEventListener("click", async () => {
     busy = false;
     setLoading(false);
     if (err.code === "auth/popup-closed-by-user" || err.code === "auth/cancelled-popup-request") return;
-    show(friendlyError(err));
+    show(err.code ? friendlyError(err) : String(err.message || err));
   }
 });
-
 /* ---------- Wiring ---------- */
 
 tabLogin.addEventListener("click", () => setMode("login"));
