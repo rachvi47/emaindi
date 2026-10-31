@@ -1,4 +1,4 @@
-// Login / sign-up page logic: email + password, phone number (OTP), Google.
+// Login / sign-up page logic: email + password, and Google (which then asks for a password).
 
 import {
   auth,
@@ -8,10 +8,11 @@ import {
   createUserWithEmailAndPassword,
   updateProfile,
   sendPasswordResetEmail,
-  RecaptchaVerifier,
-  signInWithPhoneNumber,
+  signOut,
   GoogleAuthProvider,
   signInWithPopup,
+  EmailAuthProvider,
+  linkWithCredential,
   doc,
   getDoc,
   setDoc,
@@ -23,44 +24,43 @@ const $ = (id) => document.getElementById(id);
 const form = $("auth-form");
 const tabLogin = $("tab-login");
 const tabSignup = $("tab-signup");
-const methodEmail = $("method-email");
-const methodPhone = $("method-phone");
 const nameField = $("name-field");
 const nameInput = $("name");
-const emailBlock = $("email-block");
-const phoneBlock = $("phone-block");
 const emailInput = $("email");
 const passwordInput = $("password");
 const forgotRow = $("forgot-row");
-const phoneField = $("phone-field");
-const phoneInput = $("phone");
-const codeField = $("code-field");
-const codeInput = $("code");
-const codeHint = $("code-hint");
 const submitBtn = $("submit");
 const googleBtn = $("google");
 
 // Google refuses to sign people in inside an app WebView (like a Median.co APK), so hide the button there.
-// Email and phone sign-in still work in the app.
+// Email sign-in still works in the app.
 if (/; wv\)|gonative|median/i.test(navigator.userAgent) || window.median || window.gonative) {
   googleBtn.hidden = true;
   const dv = document.querySelector(".divider");
   if (dv) dv.hidden = true;
 }
 const message = $("message");
+const pwForm = $("pw-form");
+const pwNew = $("pw-new");
+const pwConfirm = $("pw-confirm");
+const pwMessage = $("pw-message");
+const pwSubmit = $("pw-submit");
+
+let busy = false;        // true while a sign-in is running (blocks the auto redirect)
+let pwUser = null;        // the Google user who is choosing a password
 
 let mode = "login";        // "login" | "signup"
-let method = "email";      // "email" | "phone"
-let phoneStep = "number";  // "number" | "code"
-let busy = false;          // true while a sign-in is running (blocks the auto redirect)
-let confirmation = null;   // result of signInWithPhoneNumber
-let verifier = null;       // invisible reCAPTCHA
-let phoneNumber = "";      // the number the code was sent to
 
 // Already logged in? Skip this page.
 onAuthStateChanged(auth, (user) => {
-  if (user && !busy) window.location.replace("home.html");
+  if (!user || busy) return;
+  // A Google account with no password yet must finish the password step first.
+  if (needsPassword(user)) return showPasswordStep(user);
+  window.location.replace("home.html");
 });
+
+const hasPassword = (user) => user.providerData.some((p) => p.providerId === "password");
+const needsPassword = (user) => !!user.email && !hasPassword(user);
 
 /* ---------- UI helpers ---------- */
 
@@ -76,19 +76,11 @@ function setLoading(on) {
 
 function render() {
   const signup = mode === "signup";
-  const phone = method === "phone";
-  const codeStep = phone && phoneStep === "code";
 
   tabLogin.setAttribute("aria-selected", String(!signup));
   tabSignup.setAttribute("aria-selected", String(signup));
-  methodEmail.setAttribute("aria-selected", String(!phone));
-  methodPhone.setAttribute("aria-selected", String(phone));
 
-  nameField.hidden = !signup || codeStep;
-  emailBlock.hidden = phone;
-  phoneBlock.hidden = !phone;
-  phoneField.hidden = codeStep;
-  codeField.hidden = !codeStep;
+  nameField.hidden = !signup;
   forgotRow.hidden = signup;
 
   passwordInput.autocomplete = signup ? "new-password" : "current-password";
@@ -96,21 +88,11 @@ function render() {
   $("title").textContent = signup ? "Create your account" : "Welcome back";
   $("subtitle").textContent = signup ? "It takes a minute." : "Log in to see your chats.";
 
-  if (phone) {
-    submitBtn.textContent = codeStep ? "Verify and continue" : "Send code";
-  } else {
-    submitBtn.textContent = signup ? "Create account" : "Log in";
-  }
+  submitBtn.textContent = signup ? "Create account" : "Log in";
 }
 
 function setMode(next) {
   mode = next;
-  show("");
-  render();
-}
-
-function setMethod(next) {
-  method = next;
   show("");
   render();
 }
@@ -133,26 +115,15 @@ function friendlyError(err) {
       return "No connection. Check your internet and try again.";
     case "auth/operation-not-allowed":
       return "This sign-in method is turned off. Enable it in the Firebase console.";
-    case "auth/invalid-phone-number":
-    case "auth/missing-phone-number":
-      return "That phone number doesn't look right. Include the country code, for example +91 98765 43210.";
-    case "auth/quota-exceeded":
-      return "The daily text message limit has been reached. Try again tomorrow or use a test number.";
-    case "auth/invalid-verification-code":
-    case "auth/missing-verification-code":
-      return "That code is incorrect. Check it and try again.";
-    case "auth/code-expired":
-      return "That code has expired. Select Resend code.";
-    case "auth/captcha-check-failed":
-      return "The security check failed. Reload the page and try again.";
     case "auth/unauthorized-domain":
       return "This domain is not allowed. Add it under Authentication > Settings > Authorized domains.";
     case "auth/popup-blocked":
       return "Your browser blocked the Google window. Allow pop-ups and try again.";
-    case "auth/billing-not-enabled":
-      return "Phone sign-in needs billing turned on for this Firebase project (Blaze plan). Use Email or Google for now.";
-    case "auth/invalid-app-credential":
-      return "The security check (reCAPTCHA) was rejected. Reload the page and try again.";
+    case "auth/requires-recent-login":
+      return "For safety, log in with Google again, then set your password.";
+    case "auth/provider-already-linked":
+    case "auth/credential-already-in-use":
+      return "This account already has a password. Log in with your email and password.";
     default:
       console.error(err);
       return "Something went wrong (" + (err.code || err.message) + ").";
@@ -232,89 +203,6 @@ $("forgot").addEventListener("click", async () => {
   }
 });
 
-/* ---------- Phone number (OTP) ---------- */
-
-function normalizePhone(raw) {
-  const cleaned = raw.replace(/[\s\-().]/g, "");
-  return /^\+\d{8,15}$/.test(cleaned) ? cleaned : "";
-}
-
-function resetVerifier() {
-  if (verifier) {
-    try { verifier.clear(); } catch (_) { /* already cleared */ }
-    verifier = null;
-  }
-  $("recaptcha-container").innerHTML = "";
-}
-
-async function requestCode(number) {
-  busy = true;
-  setLoading(true);
-  show("");
-  try {
-    resetVerifier();
-    verifier = new RecaptchaVerifier(auth, "recaptcha-container", { size: "invisible" });
-    confirmation = await signInWithPhoneNumber(auth, number, verifier);
-    phoneNumber = number;
-    phoneStep = "code";
-    codeInput.value = "";
-    codeHint.textContent = "We sent a 6-digit code to " + number + ".";
-    render();
-    codeInput.focus();
-  } catch (err) {
-    resetVerifier();
-    show(friendlyError(err));
-  } finally {
-    busy = false;
-    setLoading(false);
-  }
-}
-
-async function submitPhone() {
-  if (phoneStep === "number") {
-    const number = normalizePhone(phoneInput.value);
-    if (!number) {
-      return show("Enter your number with the country code, for example +91 98765 43210.");
-    }
-    if (mode === "signup" && !nameInput.value.trim()) return show("Enter your name.");
-    return requestCode(number);
-  }
-
-  // Step 2: check the code
-  const code = codeInput.value.trim();
-  if (!/^\d{6}$/.test(code)) return show("Enter the 6-digit code.");
-
-  busy = true;
-  setLoading(true);
-  show("");
-  try {
-    const cred = await confirmation.confirm(code);
-    const name = nameInput.value.trim();
-    if (name && !cred.user.displayName) {
-      await updateProfile(cred.user, { displayName: name }).catch(() => {});
-    }
-    await ensureUserDoc(cred.user, name);
-    window.location.replace("home.html");
-  } catch (err) {
-    busy = false;
-    setLoading(false);
-    show(friendlyError(err));
-  }
-}
-
-$("resend").addEventListener("click", () => {
-  if (phoneNumber) requestCode(phoneNumber);
-});
-
-$("change-number").addEventListener("click", () => {
-  confirmation = null;
-  phoneStep = "number";
-  resetVerifier();
-  show("");
-  render();
-  phoneInput.focus();
-});
-
 /* ---------- Google ---------- */
 
 googleBtn.addEventListener("click", async () => {
@@ -324,7 +212,12 @@ googleBtn.addEventListener("click", async () => {
   try {
     const cred = await signInWithPopup(auth, new GoogleAuthProvider());
     await ensureUserDoc(cred.user);
-    window.location.replace("home.html");
+    if (needsPassword(cred.user)) {
+      setLoading(false);
+      showPasswordStep(cred.user);   // stays busy so we do not redirect yet
+    } else {
+      window.location.replace("home.html");
+    }
   } catch (err) {
     busy = false;
     setLoading(false);
@@ -333,18 +226,58 @@ googleBtn.addEventListener("click", async () => {
   }
 });
 
+/* ---------- Password step after Google ---------- */
+
+function showPasswordStep(user) {
+  busy = true;
+  pwUser = user;
+  form.hidden = true;
+  googleBtn.hidden = true;
+  document.querySelector(".tabs").hidden = true;
+  document.querySelector(".divider").hidden = true;
+  $("title").textContent = "One more step";
+  $("subtitle").textContent = "Signed in as " + user.email;
+  pwForm.hidden = false;
+  pwNew.focus();
+}
+
+function pwShow(text) {
+  pwMessage.textContent = text;
+  pwMessage.className = "message " + (text ? "error" : "");
+}
+
+pwForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!pwUser || pwSubmit.disabled) return;
+  const pw = pwNew.value;
+  if (pw.length < 6) return pwShow("Use a password with at least 6 characters.");
+  if (pw !== pwConfirm.value) return pwShow("The two passwords do not match.");
+
+  pwSubmit.disabled = true;
+  pwShow("");
+  try {
+    await linkWithCredential(pwUser, EmailAuthProvider.credential(pwUser.email, pw));
+    window.location.replace("home.html");
+  } catch (err) {
+    pwSubmit.disabled = false;
+    pwShow(friendlyError(err));
+  }
+});
+
+$("pw-cancel").addEventListener("click", async () => {
+  try { await signOut(auth); } catch (_) { /* ignore */ }
+  window.location.reload();
+});
+
 /* ---------- Wiring ---------- */
 
 tabLogin.addEventListener("click", () => setMode("login"));
 tabSignup.addEventListener("click", () => setMode("signup"));
-methodEmail.addEventListener("click", () => setMethod("email"));
-methodPhone.addEventListener("click", () => setMethod("phone"));
 
 form.addEventListener("submit", (e) => {
   e.preventDefault();
   if (busy) return;
-  if (method === "phone") submitPhone();
-  else submitEmail();
+  submitEmail();
 });
 
 render();
