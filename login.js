@@ -1,5 +1,4 @@
 // Login / sign-up page logic: email + password, phone number (OTP), Google.
-// Google: native sign-in inside the Median.co app, popup in a normal browser.
 
 import {
   auth,
@@ -13,7 +12,6 @@ import {
   signInWithPhoneNumber,
   GoogleAuthProvider,
   signInWithPopup,
-  signInWithCredential,
   doc,
   getDoc,
   setDoc,
@@ -41,6 +39,14 @@ const codeInput = $("code");
 const codeHint = $("code-hint");
 const submitBtn = $("submit");
 const googleBtn = $("google");
+
+// Google refuses to sign people in inside an app WebView (like a Median.co APK), so hide the button there.
+// Email and phone sign-in still work in the app.
+if (/; wv\)|gonative|median/i.test(navigator.userAgent) || window.median || window.gonative) {
+  googleBtn.hidden = true;
+  const dv = document.querySelector(".divider");
+  if (dv) dv.hidden = true;
+}
 const message = $("message");
 
 let mode = "login";        // "login" | "signup"
@@ -95,8 +101,6 @@ function render() {
   } else {
     submitBtn.textContent = signup ? "Create account" : "Log in";
   }
-
-  googleBtn.textContent = "Continue with Google";
 }
 
 function setMode(next) {
@@ -145,14 +149,10 @@ function friendlyError(err) {
       return "This domain is not allowed. Add it under Authentication > Settings > Authorized domains.";
     case "auth/popup-blocked":
       return "Your browser blocked the Google window. Allow pop-ups and try again.";
-    case "auth/operation-not-supported-in-this-environment":
-      return "Google sign-in isn't supported in this browser. Use the app or another browser.";
     case "auth/billing-not-enabled":
       return "Phone sign-in needs billing turned on for this Firebase project (Blaze plan). Use Email or Google for now.";
     case "auth/invalid-app-credential":
       return "The security check (reCAPTCHA) was rejected. Reload the page and try again.";
-    case "google/native-failed":
-      return err.message || "Google sign-in failed. Try again.";
     default:
       console.error(err);
       return "Something went wrong (" + (err.code || err.message) + ").";
@@ -315,46 +315,24 @@ $("change-number").addEventListener("click", () => {
   phoneInput.focus();
 });
 
-/* ---------- Continue with Google ---------- */
+/* ---------- Google ---------- */
 
 googleBtn.addEventListener("click", async () => {
   busy = true;
   setLoading(true);
   show("");
   try {
-    const m = window.median || window.gonative;
-    const inApp = !!m || /median|gonative/i.test(navigator.userAgent);
-    let cred;
-
-    if (inApp) {
-      if (!m || !m.socialLogin || !m.socialLogin.google) {
-        throw new Error("Median Google plugin not found. Enable Google Sign-In in App Studio and rebuild the APK.");
-      }
-
-      const data = await m.socialLogin.google.login();
-      // Debug: shows exactly what Median returned. Remove once it works.
-      show("Median replied: " + JSON.stringify(data), "ok");
-
-      const idToken = data && (data.idToken || data.id_token);
-      if (!idToken) {
-        throw new Error("No idToken from Median: " + JSON.stringify(data));
-      }
-
-      const credential = GoogleAuthProvider.credential(idToken);
-      cred = await signInWithCredential(auth, credential);
-    } else {
-      cred = await signInWithPopup(auth, new GoogleAuthProvider());
-    }
-
+    const cred = await signInWithPopup(auth, new GoogleAuthProvider());
     await ensureUserDoc(cred.user);
     window.location.replace("home.html");
   } catch (err) {
     busy = false;
     setLoading(false);
     if (err.code === "auth/popup-closed-by-user" || err.code === "auth/cancelled-popup-request") return;
-    show(err.code ? friendlyError(err) : String(err.message || err));
+    show(friendlyError(err));
   }
 });
+
 /* ---------- Wiring ---------- */
 
 tabLogin.addEventListener("click", () => setMode("login"));
