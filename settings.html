@@ -88,6 +88,11 @@ main{max-width:34rem;margin:0 auto;padding:1rem 1rem 3rem}
     <button class="row" id="about"><div>About emaindi<small>Version 1.0 · from Tohnna Corporation</small></div></button>
   </section>
 
+  <section class="card"><h2>Sign-in</h2>
+    <button class="row" id="chgphone"><div><span id="phlabel">Add phone number</span><small>Used so friends can find you by your number</small></div></button>
+    <button class="row" id="chgpw"><div><span id="pwlabel">Change password</span><small id="pwsmall">Change the password you log in with</small></div></button>
+  </section>
+
   <section class="card"><h2>Account</h2>
     <button class="row" id="logout"><div>Log out</div></button>
     <button class="row danger" id="del"><div>Delete my account</div></button>
@@ -100,7 +105,7 @@ main{max-width:34rem;margin:0 auto;padding:1rem 1rem 3rem}
 
 <script type="module">
 import {auth,db,onAuthStateChanged,signOut,updateProfile,doc,getDoc,setDoc,collection,getDocs} from "./fire.js";
-import {deleteUser,EmailAuthProvider,reauthenticateWithCredential,reauthenticateWithPopup,GoogleAuthProvider,RecaptchaVerifier,reauthenticateWithPhoneNumber} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import {deleteUser,EmailAuthProvider,reauthenticateWithCredential,reauthenticateWithPopup,GoogleAuthProvider,RecaptchaVerifier,reauthenticateWithPhoneNumber,PhoneAuthProvider,updatePhoneNumber,linkWithCredential,updatePassword} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import {deleteDoc} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 const $ = (s) => document.querySelector(s);
@@ -144,6 +149,11 @@ onAuthStateChanged(auth, async (user) => {
   const st = d.settings || {};
   document.querySelectorAll("[data-s]").forEach((b) => setSw(b, !!st[b.dataset.s]));
   paintAvatar(); counts();
+  const hasPhone = me.providerData.some((p) => p.providerId === "phone") || !!(d.phone || me.phoneNumber);
+  $("#phlabel").textContent = hasPhone ? "Change phone number" : "Add phone number";
+  const hasPw = me.providerData.some((p) => p.providerId === "password");
+  $("#pwlabel").textContent = hasPw ? "Change password" : "Add a password";
+  $("#pwsmall").textContent = hasPw ? "Change the password you log in with" : "So you can also log in with email and password";
 });
 
 document.querySelectorAll("[data-l]").forEach((b) => {
@@ -213,6 +223,117 @@ $("#logout").addEventListener("click", async () => {
   try { localStorage.removeItem("lastUid"); } catch (e) {}
   location.replace("login.html");
 });
+/* ---------- prove it is you again (needed before sensitive changes) ---------- */
+async function reauth(user) {
+  const prov = (user.providerData[0] && user.providerData[0].providerId) || "password";
+  if (prov === "password") {
+    const pw = await ask({title: "Confirm your password", input: "password", ok: "Confirm"});
+    if (!pw) return false;
+    await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, pw));
+  } else if (prov === "google.com") {
+    await reauthenticateWithPopup(user, new GoogleAuthProvider());
+  } else if (prov === "phone") {
+    const verifier = new RecaptchaVerifier(auth, "recaptcha-del", {size: "invisible"});
+    try {
+      const conf = await reauthenticateWithPhoneNumber(user, user.phoneNumber, verifier);
+      const code = await ask({title: "Enter the SMS code", text: "We sent a code to " + user.phoneNumber, input: "text", ok: "Confirm"});
+      if (!code) return false;
+      await conf.confirm(code.trim());
+    } finally { try { verifier.clear(); } catch (e) {} }
+  }
+  return true;
+}
+function authMsg(e) {
+  const c = e.code || "";
+  return c === "auth/wrong-password" || c === "auth/invalid-credential" ? "Wrong password." :
+    c === "auth/invalid-verification-code" ? "Wrong SMS code." :
+    c === "auth/code-expired" ? "That code expired. Try again." :
+    c === "auth/invalid-phone-number" ? "That phone number isn't valid. Use the country code, like +919876543210." :
+    c === "auth/credential-already-in-use" || c === "auth/account-exists-with-different-credential" ? "That number or email is already used by another account." :
+    c === "auth/email-already-in-use" ? "That email is already used by another account." :
+    c === "auth/weak-password" ? "Choose a stronger password (6 or more characters)." :
+    c === "auth/too-many-requests" ? "Too many tries. Please wait a few minutes." :
+    c === "auth/operation-not-allowed" ? "This sign-in method is not turned on in Firebase." :
+    c === "auth/popup-closed-by-user" || c === "auth/cancelled-popup-request" ? "Sign-in window was closed." :
+    c === "auth/popup-blocked" ? "Allow pop-ups, or log out, log in again and retry." :
+    c === "auth/network-request-failed" ? "No internet connection." :
+    "Something went wrong (" + (c || e.message) + ").";
+}
+
+/* ---------- add / change phone number ---------- */
+$("#chgphone").addEventListener("click", async () => {
+  const user = auth.currentUser;
+  if (!user) return toast("Please log in again.");
+  const has = user.providerData.some((p) => p.providerId === "phone");
+  const num = await ask({title: has ? "Change phone number" : "Add phone number", text: "Enter the number with country code, like +919876543210. We will text you a code.", input: "tel", ok: "Send code"});
+  if (!num) return;
+  const phone = num.replace(/[\s\-().]/g, "");
+  if (!/^\+\d{8,15}$/.test(phone)) return toast("Enter the number with the country code, like +919876543210.");
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const verifier = new RecaptchaVerifier(auth, "recaptcha-del", {size: "invisible"});
+    try {
+      const vid = await new PhoneAuthProvider(auth).verifyPhoneNumber(phone, verifier);
+      const code = await ask({title: "Enter the SMS code", text: "Sent to " + phone, input: "text", ok: "Verify"});
+      if (!code) return;
+      const cred = PhoneAuthProvider.credential(vid, code.trim());
+      if (has) await updatePhoneNumber(user, cred); else await linkWithCredential(user, cred);
+      await setDoc(ref, {phone}, {merge: true});
+      $("#phone").value = phone; $("#phlabel").textContent = "Change phone number";
+      return toast("Phone number saved.");
+    } catch (e) {
+      console.error(e);
+      if (e.code === "auth/requires-recent-login" && attempt === 0) {
+        try { if (!(await reauth(user))) return; } catch (e2) { return toast(authMsg(e2)); }
+        continue;                                    // confirmed - try again
+      }
+      return toast(authMsg(e));
+    } finally { try { verifier.clear(); } catch (e) {} }
+  }
+});
+
+/* ---------- change / add password ---------- */
+async function askNewPassword() {
+  for (;;) {
+    const a = await ask({title: "New password", text: "At least 6 characters.", input: "password", ok: "Next"});
+    if (a === null) return null;
+    if (a.length < 6) { toast("Use at least 6 characters."); continue; }
+    const b = await ask({title: "Repeat the new password", input: "password", ok: "Save"});
+    if (b === null) return null;
+    if (a !== b) { toast("The two passwords do not match."); continue; }
+    return a;
+  }
+}
+$("#chgpw").addEventListener("click", async () => {
+  const user = auth.currentUser;
+  if (!user) return toast("Please log in again.");
+  const hasPw = user.providerData.some((p) => p.providerId === "password");
+  try {
+    if (!hasPw) {                                    // Google / phone accounts can add a password too
+      let email = user.email;
+      if (!email) {
+        email = await ask({title: "Add an email", text: "A password needs an email to log in with.", input: "email", ok: "Next"});
+        if (!email) return;
+        email = email.trim().toLowerCase();
+      }
+      const pw = await askNewPassword();
+      if (!pw) return;
+      const cred = EmailAuthProvider.credential(email, pw);
+      try { await linkWithCredential(user, cred); }
+      catch (e) { if (e.code !== "auth/requires-recent-login") throw e; if (!(await reauth(user))) return; await linkWithCredential(user, cred); }
+      await setDoc(ref, {email}, {merge: true});
+      $("#email").value = email; $("#pwlabel").textContent = "Change password";
+      return toast("Password added. You can now log in with your email and password.");
+    }
+    const cur = await ask({title: "Current password", input: "password", ok: "Next"});
+    if (!cur) return;
+    const pw = await askNewPassword();
+    if (!pw) return;
+    await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, cur));
+    await updatePassword(user, pw);
+    toast("Password changed.");
+  } catch (e) { console.error(e); toast(authMsg(e)); }
+});
+
 $("#del").addEventListener("click", async () => {
   if (!(await ask({title: "Delete account?", text: "Your profile, contacts list and key backup are deleted permanently. Your old messages stay with the people you chatted with. This cannot be undone.", ok: "Continue", danger: true}))) return;
   const user = auth.currentUser;
@@ -220,18 +341,7 @@ $("#del").addEventListener("click", async () => {
   const prov = (user.providerData[0] && user.providerData[0].providerId) || "password";
   try {
     // 1. confirm it is really you (Firebase requires a recent login to delete an account)
-    if (prov === "password") {
-      const pw = await ask({title: "Confirm your password", input: "password", ok: "Confirm"});
-      if (!pw) return;
-      await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, pw));
-    } else if (prov === "google.com") {
-      await reauthenticateWithPopup(user, new GoogleAuthProvider());
-    } else if (prov === "phone") {
-      const conf = await reauthenticateWithPhoneNumber(user, user.phoneNumber, new RecaptchaVerifier(auth, "recaptcha-del", {size: "invisible"}));
-      const code = await ask({title: "Enter the SMS code", text: "We sent a code to " + user.phoneNumber, input: "text", ok: "Confirm"});
-      if (!code) return;
-      await conf.confirm(code.trim());
-    }
+    if (!(await reauth(user))) return;
     // 2. delete your data
     for (const sub of ["contacts", "private"]) {
       try { const snap = await getDocs(collection(db, "users", user.uid, sub)); await Promise.all(snap.docs.map((d) => deleteDoc(d.ref))); } catch (e) { console.warn(sub, e.code || e); }
