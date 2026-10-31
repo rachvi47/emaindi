@@ -44,6 +44,7 @@ main{max-width:34rem;margin:0 auto;padding:1rem 1rem 3rem}
 .save:disabled{opacity:.5}
 #msg{position:fixed;left:50%;bottom:max(1.2rem,env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--navy);color:#fff;padding:.7rem 1.2rem;border-radius:2rem;font-size:.9rem;z-index:9;max-width:90%}
 .foot{text-align:center;color:var(--soft);font-size:.85rem;margin-top:1.5rem}
+.hint{margin:0;padding:0 1.1rem .3rem;font-size:.85rem;color:var(--soft)}
 #dlg{position:fixed;inset:0;background:rgba(20,33,61,.55);display:grid;place-items:center;z-index:20;padding:1rem}
 #dlg .dbox{background:var(--card,#fff);color:var(--ink,#14213D);border-radius:1.2rem;padding:1.3rem;width:min(100%,23rem)}
 #dlg h3{margin:0 0 .4rem}
@@ -66,7 +67,7 @@ main{max-width:34rem;margin:0 auto;padding:1rem 1rem 3rem}
     </div>
     <label class="field"><span>Name <i id="nc">0/25</i></span><input id="name" maxlength="25" placeholder="Your name"></label>
     <label class="field"><span>About / Bio <i id="bc">0/139</i></span><textarea id="bio" rows="2" maxlength="139" placeholder="Hey there! I am using emaindi."></textarea></label>
-    <label class="field"><span>Phone number</span><input id="phone" readonly placeholder="Not added"></label>
+    <label class="field"><span>Phone number</span><input id="phone" type="tel" autocomplete="tel" placeholder="+91 98765 43210"></label>
     <label class="field"><span>Email</span><input id="email" readonly placeholder="Not added"></label>
     <button class="save" id="save">Save profile</button>
   </section>
@@ -88,9 +89,12 @@ main{max-width:34rem;margin:0 auto;padding:1rem 1rem 3rem}
     <button class="row" id="about"><div>About emaindi<small>Version 1.0 · from Tohnna Corporation</small></div></button>
   </section>
 
-  <section class="card"><h2>Sign-in</h2>
-    <button class="row" id="chgphone"><div><span id="phlabel">Add phone number</span><small>Used so friends can find you by your number</small></div></button>
-    <button class="row" id="chgpw"><div><span id="pwlabel">Change password</span><small id="pwsmall">Change the password you log in with</small></div></button>
+  <section class="card"><h2 id="pwh">Password</h2>
+    <p class="hint" id="pwhint"></p>
+    <label class="field" id="curf"><span>Current password</span><input id="pcur" type="password" autocomplete="current-password"></label>
+    <label class="field"><span>New password</span><input id="pnew" type="password" autocomplete="new-password" minlength="6"></label>
+    <label class="field"><span>Confirm new password</span><input id="pcon" type="password" autocomplete="new-password" minlength="6"></label>
+    <button class="save" id="pwsave">Change password</button>
   </section>
 
   <section class="card"><h2>Account</h2>
@@ -149,11 +153,7 @@ onAuthStateChanged(auth, async (user) => {
   const st = d.settings || {};
   document.querySelectorAll("[data-s]").forEach((b) => setSw(b, !!st[b.dataset.s]));
   paintAvatar(); counts();
-  const hasPhone = me.providerData.some((p) => p.providerId === "phone") || !!(d.phone || me.phoneNumber);
-  $("#phlabel").textContent = hasPhone ? "Change phone number" : "Add phone number";
-  const hasPw = me.providerData.some((p) => p.providerId === "password");
-  $("#pwlabel").textContent = hasPw ? "Change password" : "Add a password";
-  $("#pwsmall").textContent = hasPw ? "Change the password you log in with" : "So you can also log in with email and password";
+  pwUi();
 });
 
 document.querySelectorAll("[data-l]").forEach((b) => {
@@ -193,16 +193,64 @@ $("#file").addEventListener("change", (e) => {
 });
 $("#rmpic").addEventListener("click", () => { photo = ""; paintAvatar(); toast("Photo removed. Tap Save profile."); });
 
+/* phone number: optional, saved as +countrycode digits so people can find you by it */
+function cleanPhone(raw) {
+  const v = raw.replace(/[\s\-().]/g, "");
+  if (!v) return "";
+  return /^\+\d{8,15}$/.test(v) ? v : null;
+}
+
 $("#save").addEventListener("click", async () => {
   const name = $("#name").value.trim();
   if (!name) return toast("Please enter your name.");
+  const phone = cleanPhone($("#phone").value);
+  if (phone === null) return toast("Enter the phone number with country code, e.g. +91 98765 43210.");
   $("#save").disabled = true;
   try {
-    await setDoc(ref, {uid: me.uid, name, bio: $("#bio").value.trim(), photoUrl: photo}, {merge: true});
+    await setDoc(ref, {uid: me.uid, name, bio: $("#bio").value.trim(), photoUrl: photo, phone}, {merge: true});
+    $("#phone").value = phone;
     await updateProfile(me, {displayName: name});
     toast("Profile saved");
   } catch (e) { console.error(e); toast("Could not save. Check your connection."); }
   $("#save").disabled = false;
+});
+
+/* password: change it, or create one if the account was made with Google only */
+const hasPw = () => me.providerData.some((p) => p.providerId === "password");
+function pwUi() {
+  const has = hasPw();
+  $("#pwh").textContent = has ? "Change password" : "Create password";
+  $("#curf").hidden = !has;
+  $("#pwsave").textContent = has ? "Change password" : "Create password";
+  $("#pwhint").textContent = has ? "" : "You signed in with Google. Create a password to also log in with your email.";
+}
+$("#pwsave").addEventListener("click", async () => {
+  const cur = $("#pcur").value, nw = $("#pnew").value, con = $("#pcon").value;
+  if (hasPw() && !cur) return toast("Enter your current password.");
+  if (nw.length < 6) return toast("Use a new password with at least 6 characters.");
+  if (nw !== con) return toast("The two new passwords do not match.");
+  if (hasPw() && nw === cur) return toast("The new password must be different.");
+  if (!me.email) return toast("Add an email to your account first.");
+  $("#pwsave").disabled = true;
+  try {
+    if (hasPw()) {
+      await reauthenticateWithCredential(me, EmailAuthProvider.credential(me.email, cur));
+      await updatePassword(me, nw);
+    } else {
+      await linkWithCredential(me, EmailAuthProvider.credential(me.email, nw));
+    }
+    ["#pcur", "#pnew", "#pcon"].forEach((i) => ($(i).value = ""));
+    pwUi();
+    toast("Password saved");
+  } catch (e) {
+    console.error(e);
+    toast(e.code === "auth/invalid-credential" || e.code === "auth/wrong-password" ? "Current password is incorrect."
+      : e.code === "auth/weak-password" ? "That password is too weak."
+      : e.code === "auth/too-many-requests" ? "Too many attempts. Try again later."
+      : e.code === "auth/requires-recent-login" ? "For safety, log out, log in again, then retry."
+      : "Could not save the password.");
+  }
+  $("#pwsave").disabled = false;
 });
 
 /* notifications / invite / about */
@@ -259,80 +307,6 @@ function authMsg(e) {
     c === "auth/network-request-failed" ? "No internet connection." :
     "Something went wrong (" + (c || e.message) + ").";
 }
-
-/* ---------- add / change phone number ---------- */
-$("#chgphone").addEventListener("click", async () => {
-  const user = auth.currentUser;
-  if (!user) return toast("Please log in again.");
-  const has = user.providerData.some((p) => p.providerId === "phone");
-  const num = await ask({title: has ? "Change phone number" : "Add phone number", text: "Enter the number with country code, like +919876543210. We will text you a code.", input: "tel", ok: "Send code"});
-  if (!num) return;
-  const phone = num.replace(/[\s\-().]/g, "");
-  if (!/^\+\d{8,15}$/.test(phone)) return toast("Enter the number with the country code, like +919876543210.");
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const verifier = new RecaptchaVerifier(auth, "recaptcha-del", {size: "invisible"});
-    try {
-      const vid = await new PhoneAuthProvider(auth).verifyPhoneNumber(phone, verifier);
-      const code = await ask({title: "Enter the SMS code", text: "Sent to " + phone, input: "text", ok: "Verify"});
-      if (!code) return;
-      const cred = PhoneAuthProvider.credential(vid, code.trim());
-      if (has) await updatePhoneNumber(user, cred); else await linkWithCredential(user, cred);
-      await setDoc(ref, {phone}, {merge: true});
-      $("#phone").value = phone; $("#phlabel").textContent = "Change phone number";
-      return toast("Phone number saved.");
-    } catch (e) {
-      console.error(e);
-      if (e.code === "auth/requires-recent-login" && attempt === 0) {
-        try { if (!(await reauth(user))) return; } catch (e2) { return toast(authMsg(e2)); }
-        continue;                                    // confirmed - try again
-      }
-      return toast(authMsg(e));
-    } finally { try { verifier.clear(); } catch (e) {} }
-  }
-});
-
-/* ---------- change / add password ---------- */
-async function askNewPassword() {
-  for (;;) {
-    const a = await ask({title: "New password", text: "At least 6 characters.", input: "password", ok: "Next"});
-    if (a === null) return null;
-    if (a.length < 6) { toast("Use at least 6 characters."); continue; }
-    const b = await ask({title: "Repeat the new password", input: "password", ok: "Save"});
-    if (b === null) return null;
-    if (a !== b) { toast("The two passwords do not match."); continue; }
-    return a;
-  }
-}
-$("#chgpw").addEventListener("click", async () => {
-  const user = auth.currentUser;
-  if (!user) return toast("Please log in again.");
-  const hasPw = user.providerData.some((p) => p.providerId === "password");
-  try {
-    if (!hasPw) {                                    // Google / phone accounts can add a password too
-      let email = user.email;
-      if (!email) {
-        email = await ask({title: "Add an email", text: "A password needs an email to log in with.", input: "email", ok: "Next"});
-        if (!email) return;
-        email = email.trim().toLowerCase();
-      }
-      const pw = await askNewPassword();
-      if (!pw) return;
-      const cred = EmailAuthProvider.credential(email, pw);
-      try { await linkWithCredential(user, cred); }
-      catch (e) { if (e.code !== "auth/requires-recent-login") throw e; if (!(await reauth(user))) return; await linkWithCredential(user, cred); }
-      await setDoc(ref, {email}, {merge: true});
-      $("#email").value = email; $("#pwlabel").textContent = "Change password";
-      return toast("Password added. You can now log in with your email and password.");
-    }
-    const cur = await ask({title: "Current password", input: "password", ok: "Next"});
-    if (!cur) return;
-    const pw = await askNewPassword();
-    if (!pw) return;
-    await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, cur));
-    await updatePassword(user, pw);
-    toast("Password changed.");
-  } catch (e) { console.error(e); toast(authMsg(e)); }
-});
 
 $("#del").addEventListener("click", async () => {
   if (!(await ask({title: "Delete account?", text: "Your profile, contacts list and key backup are deleted permanently. Your old messages stay with the people you chatted with. This cannot be undone.", ok: "Continue", danger: true}))) return;
