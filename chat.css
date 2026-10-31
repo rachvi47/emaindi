@@ -1,0 +1,38 @@
+/* extra styles for chat.html (uses home.css as the base) */
+body.chat-page #chat{display:flex;flex:1;width:100%}
+body.chat-page #conv{width:100%}
+@media(min-width:820px){
+  body.chat-page #conv{max-width:920px;margin:0 auto;border-left:1px solid var(--line);border-right:1px solid var(--line)}
+}
+#offline{background:#B3261E;color:#fff;font-size:.8rem;text-align:center;padding:.3rem .5rem}
+.ic2{flex:none;width:2.6rem;height:2.6rem;border-radius:50%;color:var(--navy);display:flex;align-items:center;justify-content:center;font-size:1.3rem}
+#mic{flex:none;width:2.8rem;height:2.8rem;border-radius:50%;background:var(--navy);color:var(--marigold);display:flex;align-items:center;justify-content:center}
+#send[hidden],#mic[hidden]{display:none}
+#recbar{align-items:center}
+#recbar .recinfo{flex:1;display:flex;align-items:center;gap:.6rem;font-weight:700}
+#recbar .recinfo small{color:var(--soft);font-weight:400}
+.recdot{width:.8rem;height:.8rem;border-radius:50%;background:#d93025;animation:rec 1s infinite}
+@keyframes rec{50%{opacity:.25}}
+#recSend{flex:none;width:2.8rem;height:2.8rem;border-radius:50%;background:var(--navy);color:var(--marigold);font-size:1.2rem}
+.mimg{display:block;max-width:100%;max-height:22rem;border-radius:.7rem;margin-bottom:.25rem;cursor:zoom-in;background:rgba(0,0,0,.08)}
+.msg:has(.mimg){max-width:min(78%,20rem)}
+.vm{display:flex;align-items:center;gap:.6rem;min-width:13rem}
+.vp{flex:none;width:2.3rem;height:2.3rem;border-radius:50%;background:var(--navy);color:var(--marigold);font-size:.95rem}
+.msg.me .vp{background:#14213D;color:#FFCA3A}
+.vbar{flex:1;height:.3rem;background:rgba(20,33,61,.2);border-radius:1rem;overflow:hidden}
+.vbar i{display:block;height:100%;width:0;background:var(--navy)}
+.vd{flex:none;font-size:.78rem;color:var(--soft)}
+.callmsg{align-self:center;background:var(--line);font-size:.8rem;padding:.3rem .9rem;border-radius:1rem;margin:.3rem 0}
+.callmsg.miss{color:#B3261E}
+#viewer{position:fixed;inset:0;background:#000;z-index:25;display:flex;align-items:center;justify-content:center}
+#viewer[hidden]{display:none}
+#viewer img{max-width:100%;max-height:100%;object-fit:contain}
+#viewer #vx{position:absolute;top:max(.8rem,env(safe-area-inset-top));right:.8rem;color:#fff;background:rgba(255,255,255,.18);width:2.6rem;height:2.6rem}
+#dlg .pimg{display:block;max-width:100%;max-height:45vh;margin:0 auto .8rem;border-radius:.7rem}
+:root[data-theme=dark] .ic2{color:#f1f3f9}
+:root[data-theme=dark] #mic,:root[data-theme=dark] #recSend{background:var(--marigold);color:#14213D}
+:root[data-theme=dark] .vp{background:var(--marigold);color:#14213D}
+:root[data-theme=dark] .vbar i{background:var(--marigold)}
+:root[data-theme=dark] .vbar{background:rgba(255,255,255,.2)}
+:root[data-theme=dark] .callmsg{color:#f1f3f9}
+:root[data-theme=dark] .callmsg.miss{color:#ff8a80}
