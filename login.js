@@ -1,4 +1,5 @@
 // Login / sign-up page logic: email + password, phone number (OTP), Google.
+// Google: native sign-in inside the Median.co app, popup in a normal browser.
 
 import {
   auth,
@@ -12,6 +13,7 @@ import {
   signInWithPhoneNumber,
   GoogleAuthProvider,
   signInWithPopup,
+  signInWithCredential,
   doc,
   getDoc,
   setDoc,
@@ -93,6 +95,8 @@ function render() {
   } else {
     submitBtn.textContent = signup ? "Create account" : "Log in";
   }
+
+  googleBtn.textContent = "Continue with Google";
 }
 
 function setMode(next) {
@@ -141,10 +145,14 @@ function friendlyError(err) {
       return "This domain is not allowed. Add it under Authentication > Settings > Authorized domains.";
     case "auth/popup-blocked":
       return "Your browser blocked the Google window. Allow pop-ups and try again.";
+    case "auth/operation-not-supported-in-this-environment":
+      return "Google sign-in isn't supported in this browser. Use the app or another browser.";
     case "auth/billing-not-enabled":
       return "Phone sign-in needs billing turned on for this Firebase project (Blaze plan). Use Email or Google for now.";
     case "auth/invalid-app-credential":
       return "The security check (reCAPTCHA) was rejected. Reload the page and try again.";
+    case "google/native-failed":
+      return err.message || "Google sign-in failed. Try again.";
     default:
       console.error(err);
       return "Something went wrong (" + (err.code || err.message) + ").";
@@ -307,14 +315,83 @@ $("change-number").addEventListener("click", () => {
   phoneInput.focus();
 });
 
-/* ---------- Google ---------- */
+/* ---------- Continue with Google ---------- */
+
+// Median (and the older GoNative) inject a JS bridge into the app's WebView.
+function getNativeGoogle() {
+  const bridge = window.median || window.gonative;
+  return bridge && bridge.socialLogin && bridge.socialLogin.google
+    ? bridge.socialLogin.google
+    : null;
+}
+
+function nativeError(message) {
+  const e = new Error(message);
+  e.code = "google/native-failed";
+  return e;
+}
+
+// Opens the native Google account picker and resolves with a Google ID token.
+function nativeGoogleLogin(api) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+
+    const handle = (res) => {
+      if (settled) return;
+      settled = true;
+      delete window.__googleLoginCallback;
+
+      const data = typeof res === "string" ? safeParse(res) : res;
+      const idToken = data && (data.idToken || data.id_token);
+
+      if (idToken) return resolve(idToken);
+      if (data && (data.error === "cancelled" || data.cancelled)) {
+        const e = new Error("cancelled");
+        e.code = "auth/popup-closed-by-user";
+        return reject(e);
+      }
+      reject(nativeError((data && (data.error || data.message)) || "Google sign-in failed. Try again."));
+    };
+
+    window.__googleLoginCallback = handle;
+
+    try {
+      // Median accepts a callback name and also returns a promise in newer versions.
+      const result = api.login({ callback: "__googleLoginCallback" });
+      if (result && typeof result.then === "function") result.then(handle, (err) => {
+        if (settled) return;
+        settled = true;
+        reject(nativeError(err && err.message));
+      });
+    } catch (err) {
+      settled = true;
+      reject(nativeError(err && err.message));
+    }
+  });
+}
+
+function safeParse(text) {
+  try { return JSON.parse(text); } catch (_) { return null; }
+}
 
 googleBtn.addEventListener("click", async () => {
   busy = true;
   setLoading(true);
   show("");
   try {
-    const cred = await signInWithPopup(auth, new GoogleAuthProvider());
+    let cred;
+    const native = getNativeGoogle();
+
+    if (native) {
+      // Inside the Android app: native sign-in, then hand the token to Firebase.
+      const idToken = await nativeGoogleLogin(native);
+      const credential = GoogleAuthProvider.credential(idToken);
+      cred = await signInWithCredential(auth, credential);
+    } else {
+      // Normal browser: regular popup.
+      cred = await signInWithPopup(auth, new GoogleAuthProvider());
+    }
+
     await ensureUserDoc(cred.user);
     window.location.replace("home.html");
   } catch (err) {
