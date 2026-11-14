@@ -142,6 +142,18 @@ body.chat-open #chat{display:flex}
 :root[data-theme=dark] #dlg input{color:#f1f3f9}
 :root[data-theme=dark] #toast{background:#f1f3f9;color:#14213D}
 :root[data-theme=dark] .msg.typing{background:#1f2b4a;color:#a5adc4}
+
+/* ===== NEW: QR code + scanner popups ===== */
+#qr,#scan{position:fixed;inset:0;background:rgba(20,33,61,.55);display:grid;place-items:center;z-index:14;padding:1rem}
+#qr .box,#scan .box{background:#fff;border-radius:1.5rem;padding:1.5rem;width:min(100%,22rem);max-height:92dvh;overflow-y:auto;display:flex;flex-direction:column;align-items:center;gap:.3rem}
+#qr h2,#scan h2{margin:0}
+#qr .sub,#scan .sub{color:var(--soft);margin:0 0 .4rem;font-size:.9rem}
+#qrcode{display:flex;justify-content:center;margin:.6rem 0}
+#qrcode img,#qrcode canvas{background:#fff;padding:10px;border-radius:12px;border:1px solid var(--line)}
+#scanview{width:100%;border-radius:1rem;overflow:hidden;background:#000;min-height:4rem}
+#scan .av{width:6rem;height:6rem;font-size:2.4rem}
+:root[data-theme=dark] #qr .box,:root[data-theme=dark] #scan .box{background:#17213a}
+
 @media(min-width:820px){
 #perm{align-items:center}
 #perm .box{border-radius:1.2rem}
