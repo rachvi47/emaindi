@@ -17,6 +17,12 @@
       <header class="top">
         <button class="dots" id="meBtn" aria-label="My profile"></button>
         <h1 class="logo">emaindi</h1>
+
+        <!-- NEW: QR scanner button -->
+        <button class="dots" id="scanBtn" aria-label="Scan QR code">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h6v6H3V3zm2 2v2h2V5H5zm8-2h6v6h-6V3zm2 2v2h2V5h-2zM3 13h6v6H3v-6zm2 2v2h2v-2H5zm8 0h2v2h-2v-2zm2 2h2v2h-2v-2zm-2 2h2v2h-2v-2zm4-4h2v2h-2v-2zm0 4h2v2h-2v-2zm-4-6h2v2h-2v-2zm4 0h2v2h-2v-2z"/></svg>
+        </button>
+
         <a class="dots" href="settings.html" aria-label="Settings">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
         </a>
@@ -38,6 +44,15 @@
   <div id="perm" hidden></div>
   <div id="dlg" hidden></div>
   <div id="toast" hidden></div>
+
+  <!-- NEW: my QR code popup -->
+  <div id="qr" hidden></div>
+  <!-- NEW: camera scanner + scanned account card -->
+  <div id="scan" hidden></div>
+
+  <!-- NEW: QR libraries (generate + scan) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 
   <script type="module" src="home.js"></script>
 </body>
