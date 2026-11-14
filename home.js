@@ -129,6 +129,110 @@ function chatMenu(uid) {
   };
 }
 
+/* ---------- NEW: my QR code + QR scanner ---------- */
+// The QR code only holds "emaindi:<uid>". The scanner reads the uid, then loads that account from Firestore.
+const QR_PREFIX = "emaindi:";
+let scanner = null;
+
+// tap my photo -> show my QR code
+function showMyQr() {
+  if (!me) return;
+  if (!window.QRCode) return toast("QR code could not load. Check your internet and try again.");
+  const p = $("#qr");
+  if (!p.hidden) return;
+  p.innerHTML = `<div class="box" style="text-align:center">
+    <h2>My QR code</h2>
+    <p class="sub">Ask a friend to scan this with the scanner on their emaindi home screen.</p>
+    <div id="qrcode"></div>
+    <b>${esc(nameOf(me.uid))}</b>
+    <button class="btn ghost" data-a="prof" style="width:100%;margin-top:12px">View my profile</button>
+    <button class="btn" data-a="done" style="width:100%">Close</button></div>`;
+  openModal(p);
+  new QRCode($("#qrcode"), {text: QR_PREFIX + me.uid, width: 220, height: 220, colorDark: "#14213D", colorLight: "#ffffff", correctLevel: QRCode.CorrectLevel.M});
+  p.onclick = (e) => {
+    const a = e.target.dataset.a;
+    if (!a && e.target !== p) return;
+    closeModal(p);
+    if (a === "prof") setTimeout(() => showInfo(me.uid), 250);   // the old "tap photo" behaviour is still available here
+  };
+}
+
+// stop the camera (safe to call many times)
+async function stopScanner() {
+  if (!scanner) return;
+  const s = scanner; scanner = null;
+  try { await s.stop(); } catch (e) {}
+  try { s.clear(); } catch (e) {}
+}
+function closeScan() { stopScanner(); closeModal($("#scan")); }
+// also stop the camera if the popup is closed any other way (e.g. phone back button)
+new MutationObserver(() => { if ($("#scan").hidden) stopScanner(); }).observe($("#scan"), {attributes: true, attributeFilter: ["hidden"]});
+
+// scanner button -> open camera
+function openScan() {
+  if (!me) return;
+  if (!window.Html5Qrcode) return toast("Scanner could not load. Check your internet and try again.");
+  if (!navigator.onLine) return toast("You're offline. Scanning needs internet.");
+  const p = $("#scan");
+  if (!p.hidden) return;
+  p.innerHTML = `<div class="box" style="text-align:center">
+    <h2>Scan QR code</h2>
+    <p class="sub">Point the camera at a friend's emaindi QR code.</p>
+    <div id="scanview"></div>
+    <button class="btn ghost" data-a="done" style="width:100%;margin-top:12px">Cancel</button></div>`;
+  openModal(p);
+  p.onclick = (e) => { if (e.target.dataset.a === "done" || e.target === p) closeScan(); };
+  let handled = false;
+  scanner = new Html5Qrcode("scanview");
+  scanner.start({facingMode: "environment"}, {fps: 10, qrbox: {width: 220, height: 220}},
+    (text) => { if (handled) return; handled = true; onScanned(text); },
+    () => {}
+  ).catch((err) => {
+    console.error("Camera failed:", err);
+    toast("Could not open the camera. Please allow camera access.");
+    closeScan();
+  });
+}
+
+// a code was read -> find that account
+async function onScanned(text) {
+  await stopScanner();
+  const t = String(text || "").trim();
+  if (!t.startsWith(QR_PREFIX)) { toast("This is not an emaindi QR code."); return closeScan(); }
+  const uid = t.slice(QR_PREFIX.length).trim();
+  if (!uid) { toast("This is not an emaindi QR code."); return closeScan(); }
+  if (uid === me.uid) { toast("That's your own QR code."); return closeScan(); }
+  try {
+    const snap = await getDocs(query(collection(db, "users"), where("uid", "==", uid), limit(1)));
+    if (snap.empty) { toast("Account not found."); return closeScan(); }
+    const u = snap.docs[0].data();
+    people[u.uid] = u; watch(u.uid);
+    showScanned(u);
+  } catch (err) {
+    console.error("Scan lookup failed:", err);
+    toast("Could not load that account: " + (err.code || err.message));
+    closeScan();
+  }
+}
+
+// show the scanned account
+function showScanned(u) {
+  const p = $("#scan");
+  p.innerHTML = `<div class="box" style="text-align:center">
+    <h2>Account found</h2>
+    <div style="display:flex;justify-content:center;margin:12px 0">${avatar(u.uid)}</div>
+    <b>${esc(nameOf(u.uid))}</b>
+    <p class="sub">${esc(u.phone || u.email || "")}</p>
+    <button class="btn" data-a="chat" style="width:100%">Message</button>
+    <button class="btn ghost" data-a="done" style="width:100%">Close</button></div>`;
+  p.onclick = (e) => {
+    const a = e.target.dataset.a;
+    if (!a && e.target !== p) return;
+    closeScan();
+    if (a === "chat") setTimeout(() => openChat(u.uid).catch((err) => { console.error(err); toast("Could not open chat: " + (err.code || err.message)); }), 250);
+  };
+}
+
 /* ---------- offline: banner + keep the latest messages of recent chats on the phone ---------- */
 const prefetched = new Set();
 function prefetchRecent() {
@@ -175,7 +279,8 @@ async function showPerm() {
 
 /* ---------- start ---------- */
 history.replaceState({list: 1}, "");
-$("#meBtn").addEventListener("click", () => me && showInfo(me.uid));
+$("#meBtn").addEventListener("click", showMyQr);        // CHANGED: was showInfo(me.uid), now opens my QR code
+$("#scanBtn").addEventListener("click", openScan);      // NEW: scanner button
 hydrate();
 startSession(() => {
   renderMe(); renderList();
