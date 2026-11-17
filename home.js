@@ -7,6 +7,19 @@ import {initCalls} from "./call.js";
 
 let found = [], searchTimer = null, lockView = false, needRelock = false;
 
+// NEW: in a chat with yourself there is no "other" person, so fall back to your own uid
+const peer = (c) => peerOf(c) || me.uid;
+
+// NEW: pinned chats (saved on this device, separate for each account)
+const pinKey = () => "pins-" + (me ? me.uid : "");
+function pinnedIds() { try { return JSON.parse(localStorage.getItem(pinKey()) || "[]"); } catch (e) { return []; } }
+const isPinned = (id) => pinnedIds().includes(id);
+function togglePin(id) {
+  const a = pinnedIds(), i = a.indexOf(id);
+  if (i >= 0) a.splice(i, 1); else a.unshift(id);
+  try { localStorage.setItem(pinKey(), JSON.stringify(a)); } catch (e) {}
+}
+
 /* ---------- chat list + search ---------- */
 function renderMe() { const b = $("#meBtn"); if (b && me) b.innerHTML = avatar(me.uid); }
 hooks.meChanged = renderMe;
@@ -20,9 +33,11 @@ function renderList() {
   const q = $("#q").value.trim().toLowerCase();
   const lockedSet = new Set(lockedIds());
   const rows = chats.filter(visibleChat).filter((c) => (lockView ? lockedSet.has(c.id) : !lockedSet.has(c.id))).filter((c) => {
-    const o = peerOf(c), p = people[o] || {};
+    const o = peer(c), p = people[o] || {};
     return !q || [nameOf(o), p.phone, p.email].join(" ").toLowerCase().includes(q);
   });
+  const pins = pinnedIds();
+  rows.sort((a, b) => (pins.includes(b.id) ? 1 : 0) - (pins.includes(a.id) ? 1 : 0));   // NEW: pinned chats stay on top
   let h = "";
   if (lockView) h += lockHeaderRows();
   else if (!q) { const n = chats.filter((c) => visibleChat(c) && lockedSet.has(c.id)).length; if (n) h += lockFolderRow(n); }
@@ -32,11 +47,11 @@ function renderList() {
   if (rows.length) {
     if (q) h += '<div class="sec">Chats</div>';
     h += rows.map((c) => {
-      const o = peerOf(c), n = (c.unread && c.unread[me.uid]) || 0, mine = c.lastSender === me.uid;
-      const t = ms(c.lastMessageAt);
+      const o = peer(c), n = (c.unread && c.unread[me.uid]) || 0, mine = c.lastSender === me.uid;
+      const t = ms(c.lastMessageAt), pinned = pins.includes(c.id);
       return `<button class="row" data-chat="1" data-uid="${o}">${avatar(o)}<div class="meta">
         <div class="line1"><span class="nm">${esc(nameOf(o))}</span><span class="tm ${n ? "new" : ""}">${listTime(t)}</span></div>
-        <div class="line2"><span class="pv">${mine ? '<span class="tk">✓</span>' : ""}${isTyping(c) ? '<span class="typ">typing…</span>' : esc(preview(c))}</span>${n ? `<span class="badge">${n}</span>` : ""}</div></div></button>`;
+        <div class="line2"><span class="pv">${mine ? '<span class="tk">✓</span>' : ""}${isTyping(c) ? '<span class="typ">typing…</span>' : esc(preview(c))}</span>${(n || pinned) ? `<span style="display:flex;align-items:center;gap:6px">${pinned ? '<span style="font-size:12px">📌</span>' : ""}${n ? `<span class="badge">${n}</span>` : ""}</span>` : ""}</div></div></button>`;
     }).join("");
   }
   $("#rows").innerHTML = h || `<div class="none">${q ? "No chats found. Enter the full phone number (with country code) or email to find someone." : "No chats yet. Search a phone number or email above to start one."}</div>`;
@@ -118,12 +133,14 @@ rowsEl.addEventListener("contextmenu", (e) => { const r = e.target.closest(".row
 function chatMenu(uid) {
   const s = $("#sheet");
   if (!s.hidden) return;
-  s.innerHTML = `<div class="box"><button data-a="lock">${isLocked(chatId(me.uid, uid)) ? "Unlock chat" : "Lock chat"}</button><button data-a="del" class="danger">Delete chat</button><button data-a="x">Cancel</button></div>`;
+  const cid = chatId(me.uid, uid);
+  s.innerHTML = `<div class="box"><button data-a="pin">${isPinned(cid) ? "Unpin chat" : "Pin chat"}</button><button data-a="lock">${isLocked(cid) ? "Unlock chat" : "Lock chat"}</button><button data-a="del" class="danger">Delete chat</button><button data-a="x">Cancel</button></div>`;
   openModal(s);
   s.onclick = (ev) => {
     const a = ev.target.dataset.a;
     if (!a && ev.target !== s) return;
     closeModal(s);
+    if (a === "pin") { togglePin(cid); renderList(); }
     if (a === "lock") setTimeout(async () => { await toggleLock(uid); renderList(); }, 250);
     if (a === "del") setTimeout(() => deleteChat(uid), 250);
   };
