@@ -262,7 +262,16 @@ function prefetchRecent() {
     getDocs(query(collection(db, "chats", c.id, "messages"), orderBy("createdAt", "desc"), limit(40))).catch(() => {});
   });
 }
-hooks.chatsChanged = prefetchRecent;
+// NEW: keep the chat list saved on the phone so it shows instantly after a reload (even offline)
+let saveTimer = null;
+function saveChatsNow() { try { if (me && !me.cached) saveCache(); } catch (e) { console.error("Cache save failed:", e); } }
+function saveChatsSoon() { clearTimeout(saveTimer); saveTimer = setTimeout(saveChatsNow, 800); }
+hooks.chatsChanged = () => { prefetchRecent(); saveChatsSoon(); };
+// save right before the page is closed, reloaded or hidden
+addEventListener("pagehide", saveChatsNow);
+document.addEventListener("visibilitychange", () => { if (document.hidden) saveChatsNow(); });
+// ask the browser not to delete saved chats when the phone is low on space
+try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
 function netBanner() { const b = $("#offline"); if (b) b.hidden = navigator.onLine; }
 addEventListener("online", () => { netBanner(); prefetchRecent(); });
 addEventListener("offline", netBanner);
