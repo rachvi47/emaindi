@@ -27,7 +27,7 @@ function renderList() {
   if (lockView) h += lockHeaderRows();
   else if (!q) { const n = chats.filter((c) => visibleChat(c) && lockedSet.has(c.id)).length; if (n) h += lockFolderRow(n); }
   if (lockView && !rows.length) h += '<div class="none">No locked chats yet. Long-press a chat and choose “Lock chat”.</div>';
-  const fresh = found.filter((u) => u.uid !== me.uid);
+  const fresh = found;   // CHANGED: your own account is now included in search results too
   if (q && fresh.length) h += '<div class="sec">On emaindi</div>' + fresh.map((u) => `<button class="row" data-uid="${u.uid}">${avatar(u.uid)}<div class="meta"><div class="nm">${esc(nameOf(u.uid))}</div><div class="pv">${esc(u.phone || u.email)}</div></div></button>`).join("");
   if (rows.length) {
     if (q) h += '<div class="sec">Chats</div>';
