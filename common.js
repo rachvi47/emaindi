@@ -62,7 +62,8 @@ function beep() {
 }
 
 
-const peerOf = (c) => c.participants.find((u) => u !== me.uid);
+// CHANGED: in a chat with yourself there is no "other" person, so fall back to your own uid
+const peerOf = (c) => c.participants.find((u) => u !== me.uid) || me.uid;
 const chatId = (a, b) => [a, b].sort().join("_");
 const visibleChat = (c) => !!c.lastMessage && ms(c.lastMessageAt) > ms(c.deletedAt && c.deletedAt[me.uid]);
 const nameOf = (uid) => (contacts[uid] && contacts[uid].name) || (people[uid] && (people[uid].name || people[uid].phone || people[uid].email)) || "Unknown";
@@ -255,6 +256,7 @@ export function watch(uid) {
     if (me && uid === me.uid) { hooks.meChanged(); if (!presOn) { presOn = true; pres(true); } }
     hooks.peerChanged(uid);
     hooks.render();
+    saveCache();   // NEW: keep names and photos saved on the phone too
   });
 }
 
@@ -370,6 +372,7 @@ function notifyNew() {
   for (const c of chats) {
     const t = ms(c.lastMessageAt), prev = seenAt[c.id] ?? (notifyReady ? 0 : t);
     seenAt[c.id] = t;
+    if (peerOf(c) === me.uid) continue;   // NEW: chat with yourself: no sound, no notification
     if (t <= prev || !c.lastSender || c.lastSender === me.uid) continue;
     if (!(c.unread && c.unread[me.uid] > 0)) continue;
     beep();
@@ -380,6 +383,7 @@ function notifyNew() {
 }
 function markDelivered() {
   for (const c of chats) {
+    if (peerOf(c) === me.uid) continue;   // NEW: chat with yourself: no delivered ticks
     const t = ms(c.lastMessageAt), key = c.id + t;
     if (c.lastSender && c.lastSender !== me.uid && t > ms(c.deliveredAt && c.deliveredAt[me.uid]) && !delivering.has(key)) {
       delivering.add(key);
@@ -427,15 +431,17 @@ const T = (n) => (n ? {toMillis: () => n} : null);
 const packMs = (o) => { const r = {}; for (const k in o || {}) r[k] = ms(o[k]); return r; };
 const unpackMs = (o) => { const r = {}; for (const k in o || {}) r[k] = T(o[k]); return r; };
 let saveT = null, started = false;
-export function saveCache() {
+// CHANGED: saveCache(true) saves right now (used when the page is closed); saveCache() saves after a short pause
+export function saveCache(now) {
   clearTimeout(saveT);
-  saveT = setTimeout(() => {
+  const run = () => {
     if (!me || me.cached) return;
     const ids = new Set([me.uid, ...chats.map(peerOf)]), pp = {};
     ids.forEach((u) => { const p = people[u]; if (p) pp[u] = {uid: p.uid, name: p.name, phone: p.phone, email: p.email, photoUrl: p.photoUrl, bio: p.bio, settings: p.settings, publicKey: p.publicKey, oldPublicKeys: p.oldPublicKeys, lastActive: ms(p.lastActive)}; });
     const cs = chats.filter((c) => c.lastMessage).slice(0, 60).map((c) => ({id: c.id, participants: c.participants, lastMessage: c.lastMessage, lastMessageAt: ms(c.lastMessageAt), lastSender: c.lastSender || "", unread: c.unread || {}, lastRead: packMs(c.lastRead), deliveredAt: packMs(c.deliveredAt), deletedAt: packMs(c.deletedAt)}));
     idbSet("cache:" + me.uid, {chats: cs, people: pp, contacts: {...contacts}}).catch(() => {});
-  }, 800);
+  };
+  if (now) run(); else saveT = setTimeout(run, 800);
 }
 export async function hydrate() {
   let uid = null; try { uid = localStorage.getItem("lastUid"); } catch (e) {}
