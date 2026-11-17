@@ -13,12 +13,14 @@ let cid = "", cur = null, msgs = [], raw = [], replyTo = null, msgUnsub = null, 
 const goHome = () => location.replace("home.html");
 const fmt = (s) => Math.floor(s / 60) + ":" + String(Math.round(s) % 60).padStart(2, "0");
 const msgPreview = (m) => m.deleted ? "🚫 Deleted message" : m.type === "image" ? "📷 " + (m.text || "Photo") : m.type === "voice" ? "🎤 Voice message" : m.type === "call" ? "📞 " + m.text : m.text;
+const isSelf = () => !!me && peerUid === me.uid;   // NEW: a chat with yourself ("Message yourself")
 
 /* ---------- header ---------- */
 function renderHead() {
-  const u = people[peerUid] || {};
-  const st = isTyping(cur) ? '<span class="typing-txt">typing<span class="tdots"><i></i><i></i><i></i></span></span>' : hidden(u) ? "" : online(u) ? "online" : u.lastActive ? "last seen " + dayLabel(ms(u.lastActive)).toLowerCase() + " at " + hm(ms(u.lastActive)) : "";
-  $("#peer").innerHTML = `${avatar(peerUid, "sm")}<div style="min-width:0"><div class="nm">${esc(nameOf(peerUid))}</div><small>${st}</small></div>`;
+  const u = people[peerUid] || {}, self = isSelf();
+  // CHANGED: in a chat with yourself there is no online / typing / last seen status
+  const st = self ? "Message yourself" : isTyping(cur) ? '<span class="typing-txt">typing<span class="tdots"><i></i><i></i><i></i></span></span>' : hidden(u) ? "" : online(u) ? "online" : u.lastActive ? "last seen " + dayLabel(ms(u.lastActive)).toLowerCase() + " at " + hm(ms(u.lastActive)) : "";
+  $("#peer").innerHTML = `${avatar(peerUid, "sm")}<div style="min-width:0"><div class="nm">${esc(nameOf(peerUid))}${self ? " (You)" : ""}</div><small>${st}</small></div>`;
 }
 $("#peer").addEventListener("click", () => showInfo(peerUid));
 $("#back").addEventListener("click", () => (history.length > 1 ? history.back() : goHome()));
@@ -65,6 +67,7 @@ async function decodeAndShow() {
 /* ---------- drawing the messages ---------- */
 function tick(m) {
   if (m.pending) return '<span class="tk">🕓</span>';
+  if (isSelf()) return '<span class="tk r">✓✓</span>';   // NEW: your own notes are always "read"
   const t = ms(m.createdAt);
   const noRx = mySet().noReceipts || (people[peerUid] && people[peerUid].settings && people[peerUid].settings.noReceipts);
   if (!noRx && ms(cur.lastRead && cur.lastRead[peerUid]) >= t) return '<span class="tk r">✓✓</span>';
@@ -100,7 +103,7 @@ function renderMsgs(force) {
     const q = m.replyTo ? `<div class="quote"><b>${esc(m.replyTo.name)}</b>${esc(m.replyTo.text)}</div>` : "";
     h += `<div class="msg ${mine ? "me" : ""} ${m.deleted ? "del" : ""}" data-id="${m.id}">${m.deleted ? "" : q}${bodyHtml(m)}<div class="ft">${hm(t)} ${mine ? tick(m) : ""}</div></div>`;
   }
-  if (isTyping(cur)) h += '<div class="msg typing"><i></i><i></i><i></i></div>';
+  if (isTyping(cur) && !isSelf()) h += '<div class="msg typing"><i></i><i></i><i></i></div>';
   box.innerHTML = h;
   paintVoice();
   if (stick) box.scrollTop = box.scrollHeight;
@@ -123,7 +126,10 @@ async function sendMessage(fields, previewText) {
   const fail = (err) => { console.error(err); toast("Message could not be sent."); };
   // not awaited on purpose: offline, these wait in the phone's queue and go out when the internet returns
   addDoc(collection(db, "chats", cid, "messages"), {senderId: me.uid, createdAt: serverTimestamp(), replyTo: rep, deleted: false, ...fields, text}).catch(fail);
-  updateDoc(doc(db, "chats", cid), {lastMessage: last, lastMessageAt: serverTimestamp(), lastSender: me.uid, ["unread." + peerUid]: increment(1)}).catch(fail);
+  // CHANGED: a message to yourself is never "unread"
+  const chatUpdate = {lastMessage: last, lastMessageAt: serverTimestamp(), lastSender: me.uid};
+  if (!isSelf()) chatUpdate["unread." + peerUid] = increment(1);
+  updateDoc(doc(db, "chats", cid), chatUpdate).catch(fail);
   return true;
 }
 async function sendText() {
@@ -140,7 +146,7 @@ $("#txt").addEventListener("focus", () => setTimeout(fitViewport, 300));
 /* ---------- typing indicator (what the other person sees) ---------- */
 let typingOn = false, typingSentAt = 0;
 function sendTyping(on) {
-  if (!cid) return;
+  if (!cid || isSelf()) return;      // CHANGED: nobody to show "typing…" to in a chat with yourself
   if (on) { if (Date.now() - typingSentAt < 2500) return; typingSentAt = Date.now(); typingOn = true; }
   else { if (!typingOn) return; typingOn = false; typingSentAt = 0; }
   updateDoc(doc(db, "chats", cid), {["typing." + me.uid]: on ? serverTimestamp() : 0}).catch(() => {});
@@ -338,6 +344,7 @@ startSession(async () => {
   watch(peerUid);
   cur = {id: cid, participants: [me.uid, peerUid].sort(), unread: {}, lastRead: {}, deliveredAt: {}};
   initCalls();
+  if (isSelf()) $("#callBtn").style.display = "none";   // NEW: you can't call yourself
   renderHead(); renderMsgs(true);
   hooks.chatsChanged();         // in case the chat list has already loaded
 });
