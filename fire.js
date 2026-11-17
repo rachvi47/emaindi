@@ -68,10 +68,15 @@ try {
 }
 // Keeps recent chats, messages and users in this browser (IndexedDB), so the app opens fast
 // and shows your chats even offline. Messages are cached as encrypted text, same as in Firestore.
+// CHANGED: the saved copy can grow to 100 MB (the default is 40 MB) before the oldest data is cleaned up,
+// so more chats and messages stay on the phone, like WhatsApp.
 let db;
 try {
   db = initializeFirestore(app, {
-    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager(),
+      cacheSizeBytes: 100 * 1024 * 1024,
+    }),
   });
 } catch (err) {
   console.warn("Offline cache not available, using normal mode:", err);
