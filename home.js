@@ -47,10 +47,11 @@ function renderList() {
   if (rows.length) {
     if (q) h += '<div class="sec">Chats</div>';
     h += rows.map((c) => {
-      const o = peer(c), n = (c.unread && c.unread[me.uid]) || 0, mine = c.lastSender === me.uid;
+      const o = peer(c), self = o === me.uid;
+      const n = self ? 0 : (c.unread && c.unread[me.uid]) || 0, mine = !self && c.lastSender === me.uid;   // self chat: no unread badge, no tick
       const t = ms(c.lastMessageAt), pinned = pins.includes(c.id);
       return `<button class="row" data-chat="1" data-uid="${o}">${avatar(o)}<div class="meta">
-        <div class="line1"><span class="nm">${esc(nameOf(o))}</span><span class="tm ${n ? "new" : ""}">${listTime(t)}</span></div>
+        <div class="line1"><span class="nm">${esc(nameOf(o))}${self ? " (You)" : ""}</span><span class="tm ${n ? "new" : ""}">${listTime(t)}</span></div>
         <div class="line2"><span class="pv">${mine ? '<span class="tk">✓</span>' : ""}${isTyping(c) ? '<span class="typ">typing…</span>' : esc(preview(c))}</span>${(n || pinned) ? `<span style="display:flex;align-items:center;gap:6px">${pinned ? '<span style="font-size:12px">📌</span>' : ""}${n ? `<span class="badge">${n}</span>` : ""}</span>` : ""}</div></div></button>`;
     }).join("");
   }
