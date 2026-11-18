@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#101b34">
+  <title>Sign in · Emaindi</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body class="auth-body">
+  <main class="auth-layout">
+    <section class="auth-intro"><a class="brand brand-large" href="./login.html">emaindi<span>.</span></a><p class="eyebrow">A quieter kind of connection</p><h1>Your people.<br>Your conversations.</h1><p class="intro-copy">Sign in with the account you already use for Emaindi. Your conversations remain in the same Firebase project.</p></section>
+    <section class="auth-card">
+      <div class="auth-tabs"><button class="active" id="tab-login" type="button">Sign in</button><button id="tab-signup" type="button">Create account</button></div>
+      <form id="email-form">
+        <label id="name-field" hidden>Your name<input id="name" maxlength="40" autocomplete="name" placeholder="Name"></label>
+        <label>Email address<input id="email" type="email" required autocomplete="email" placeholder="you@example.com"></label>
+        <label>Password<input id="password" type="password" required minlength="6" autocomplete="current-password" placeholder="At least 6 characters"></label>
+        <button class="primary-btn" id="email-submit" type="submit">Sign in</button>
+      </form>
+      <div class="or"><span>or</span></div>
+      <button class="secondary-btn" id="google" type="button">Continue with Google</button>
+      <div class="divider-label">PHONE SIGN IN</div>
+      <form id="phone-form">
+        <label>Phone number<input id="phone" type="tel" autocomplete="tel" placeholder="+91 98765 43210"></label>
+        <div id="code-field" hidden><label>Verification code<input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6-digit code"></label></div>
+        <div id="recaptcha-container"></div>
+        <button class="secondary-btn" id="phone-submit" type="submit">Send verification code</button>
+      </form>
+      <p class="auth-message" id="auth-message" role="alert"></p>
+      <p class="auth-note">Use your existing sign-in method. Creating a new account will not recover a different account's chats.</p>
+    </section>
+  </main>
+  <script type="module" src="./login.js"></script>
+</body>
+</html>
