@@ -95,7 +95,7 @@ function dataUrlToBlob(u) {
 const mediaUrl = (m, f) => blobUrls[m.id + f] || (blobUrls[m.id + f] = URL.createObjectURL(dataUrlToBlob(m[f])));   // short blob: links keep the page fast
 function bodyHtml(m) {
   if (m.deleted) return '<div class="t">🚫 This message was deleted</div>';
-  if (m.type === "image" && m.img) return `<img class="mimg" src="${mediaUrl(m, "img")}" alt="Photo">${m.text ? `<div class="t">${esc(m.text)}</div>` : ""}`;
+  if (m.type === "image" && m.img) return `<img class="mimg" src="${mediaUrl(m, "img")}" alt="Photo" loading="lazy" decoding="async">${m.text ? `<div class="t">${esc(m.text)}</div>` : ""}`;
   if (m.type === "voice" && m.audio) return `<div class="vm" data-id="${m.id}"><button class="vp" aria-label="Play">▶</button><div class="vbar"><i></i></div><span class="vd">${fmt(m.dur || 0)}</span></div>`;
   return `<div class="t">${esc(m.text)}</div>`;
 }
