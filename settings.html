@@ -93,8 +93,8 @@ main{max-width:34rem;margin:0 auto;padding:1rem 1rem 3rem}
 
   <section class="card"><h2>Storage &amp; data</h2>
     <div class="row" style="display:block"><div><b id="cachecount">Checking offline cache…</b><small id="storageusage">Checking device storage…</small></div></div>
-    <p class="hint">Up to 200 recent messages per chat are cached on this device, including media when space allows. Older messages remain in your cloud conversations and can be loaded when online. Clearing this cache never deletes cloud messages.</p>
-    <button class="save" id="clearcache" type="button">Clear offline message cache</button>
+    <p class="hint">Up to 200 recent messages per chat are kept in Emaindi's extra local cache, including media when space allows. Older messages remain in your cloud conversations and can be loaded when online. This button clears only Emaindi's extra cache; Firebase manages its separate offline cache.</p>
+    <button class="save" id="clearcache" type="button">Clear recent-message cache</button>
   </section>
 
   <section class="card"><h2>Help</h2>
@@ -294,12 +294,12 @@ $("#pwsave").addEventListener("click", async () => {
 
 $("#clearcache").addEventListener("click", async () => {
   if (!me) return;
-  const ok = await ask({title: "Clear offline message cache?", text: "This removes recent message and media copies from this device only. Your conversations in the cloud are not deleted. They will be cached again as you open chats.", ok: "Clear cache", danger: true});
+  const ok = await ask({title: "Clear recent-message cache?", text: "This removes Emaindi's extra recent message and media copies from this device. Your cloud conversations are not deleted. Firebase's separate offline cache is managed independently.", ok: "Clear cache", danger: true});
   if (!ok) return;
   $("#clearcache").disabled = true;
   try {
     await clearAccountOfflineMessages(me.uid);
-    toast("Offline message cache cleared. Cloud chats are safe.");
+    toast("Recent-message cache cleared. Cloud chats are safe.");
     await refreshStorage();
   } catch (e) {
     console.error(e); toast("Could not clear the local cache.");
