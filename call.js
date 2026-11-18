@@ -21,7 +21,7 @@ function ensureUI() {
 #callui .cbtns{display:flex;justify-content:center;gap:2rem}
 #callui .cbtn{width:4.2rem;height:4.2rem;border-radius:50%;font-size:1.6rem;background:rgba(255,255,255,.16);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative}
 #callui .cbtn small{position:absolute;bottom:-1.5rem;font-size:.72rem;color:#cfd5e6;white-space:nowrap}
-#callui .cbtn.red{background:#d93025}#callui .cbtn.green{background:#1a9c4a}#callui .cbtn.on{background:#fff;color:#14213D}
+#callui .cbtn.red{background:#d93025}#callui .cbtn.green{background:#1a9c4a}#callui .cbtn.on{background:#fff;color:#14213D}#callui .cbtns{gap:1.15rem;flex-wrap:wrap}#callui .cbtn{flex:0 0 4.2rem}#callui .cbtn:focus-visible{outline:3px solid #FFC93C;outline-offset:4px}
 #callui .cbtn.red span{display:inline-block;transform:rotate(135deg)}
 #callui .av.big{width:7rem;height:7rem;font-size:2.8rem;margin:0 auto}`;
   document.head.appendChild(st);
@@ -33,6 +33,7 @@ function ensureUI() {
     if (k === "accept") accept();
     if (k === "decline" || k === "end") endCall();
     if (k === "mute" && call) { call.muted = !call.muted; call.stream && call.stream.getAudioTracks().forEach((t) => (t.enabled = !call.muted)); paint(); }
+    if (k === "speaker" && call) toggleSpeaker();
   });
   return d;
 }
@@ -48,7 +49,7 @@ function paint() {
   d.innerHTML = `<div class="cwrap">${avatar(call.peer, "big")}<h2>${esc(nameOf(call.peer))}</h2><p id="cstat">${statText()}</p>
     <div class="cbtns">${inc
       ? '<button class="cbtn red" data-c="decline"><span>📞</span><small>Decline</small></button><button class="cbtn green" data-c="accept">📞<small>Accept</small></button>'
-      : `<button class="cbtn ${call.muted ? "on" : ""}" data-c="mute">${call.muted ? "🔇" : "🎤"}<small>${call.muted ? "Unmute" : "Mute"}</small></button><button class="cbtn red" data-c="end"><span>📞</span><small>End</small></button>`}</div></div>`;
+      : `<button class="cbtn ${call.muted ? "on" : ""}" data-c="mute">${call.muted ? "🔇" : "🎤"}<small>${call.muted ? "Unmute" : "Mute"}</small></button><button class="cbtn ${call.speaker ? "on" : ""}" data-c="speaker" aria-pressed="${!!call.speaker}">🔊<small>Speaker ${call.speaker ? "on" : "off"}</small></button><button class="cbtn red" data-c="end"><span>📞</span><small>End</small></button>`}</div></div>`;
   d.hidden = false;
 }
 
@@ -65,6 +66,34 @@ function ringStart(incoming) {
   play(); ringTimer = setInterval(play, 2200);
 }
 function ringStop() { clearInterval(ringTimer); ringTimer = null; if (navigator.vibrate) navigator.vibrate(0); }
+
+// Select a system audio output when the browser exposes the standard Audio Output API.
+// Many mobile browsers do not expose earpiece/speaker routing; in that case the OS owns it.
+async function toggleSpeaker() {
+  const c = call, audio = $("#callaudio");
+  if (!c || !audio) return;
+  const wantsSpeaker = !c.speaker;
+  if (typeof audio.setSinkId !== "function") {
+    toast("Speaker routing is controlled by your phone on this browser. Use the call audio output control.");
+    return;
+  }
+  try {
+    let target = "default";
+    if (wantsSpeaker && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const speaker = devices.find((d) => d.kind === "audiooutput" && /speaker|loudspeaker/i.test(d.label));
+      if (speaker) target = speaker.deviceId;
+    }
+    await audio.setSinkId(target);
+    if (call !== c) return;
+    c.speaker = wantsSpeaker;
+    paint();
+    toast(wantsSpeaker ? "Speaker output selected." : "Default audio output selected.");
+  } catch (e) {
+    console.warn("Audio output selection unavailable:", e);
+    toast("This device does not allow changing call audio output here.");
+  }
+}
 
 /* ---------- helpers ---------- */
 function guardBack() { history.pushState({call: 1}, ""); }
@@ -85,7 +114,12 @@ function makePC() {
   const c = call, pc = new RTCPeerConnection(ICE);
   c.pc = pc;
   c.stream.getTracks().forEach((t) => pc.addTrack(t, c.stream));
-  pc.ontrack = (e) => { const a = $("#callaudio"); a.srcObject = e.streams[0]; a.play().catch(() => {}); };
+  pc.ontrack = (e) => {
+    const a = $("#callaudio");
+    a.autoplay = true; a.playsInline = true; a.volume = 1;
+    a.srcObject = e.streams && e.streams[0] ? e.streams[0] : new MediaStream([e.track]);
+    a.play().catch((err) => { console.warn("Remote audio playback needs a user gesture:", err); toast("Tap the speaker button if you cannot hear the call."); });
+  };
   pc.onconnectionstatechange = () => {
     if (!call || call.pc !== pc) return;
     const s = pc.connectionState;
@@ -151,7 +185,7 @@ export async function startCall(peerUid) {
   if (call) return toast("You're already in a call.");
   if (!navigator.onLine) return toast("You're offline. Calls need internet.");
   const ref = doc(collection(db, "calls"));
-  call = {id: ref.id, ref, peer: peerUid, role: "caller", state: "calling", unsubs: [], pending: [], queue: [], ready: false, muted: false};
+  call = {id: ref.id, ref, peer: peerUid, role: "caller", state: "calling", unsubs: [], pending: [], queue: [], ready: false, muted: false, speaker: false};
   const c = call;
   paint(); guardBack(); ringStart(false);
   try { c.stream = await getMic(); } catch (e) { return fail(e); }
@@ -180,7 +214,7 @@ export async function startCall(peerUid) {
 function incoming(snap) {
   const d = snap.data();
   watch(d.callerId);
-  call = {id: snap.id, ref: snap.ref, peer: d.callerId, role: "callee", state: "incoming", offer: d.offer, unsubs: [], pending: [], muted: false};
+  call = {id: snap.id, ref: snap.ref, peer: d.callerId, role: "callee", state: "incoming", offer: d.offer, unsubs: [], pending: [], muted: false, speaker: false};
   const c = call;
   paint(); guardBack(); ringStart(true); callNotif(true);
   c.unsubs.push(onSnapshot(snap.ref, (s) => { const x = s.data(); if (call === c && x && ["ended", "missed", "declined"].includes(x.status)) finish(x.status); }));
