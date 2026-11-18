@@ -323,10 +323,10 @@ export async function toggleLock(uid) {
   const id = chatId(me.uid, uid), set = lockedIds();
   if (set.includes(id)) {
     if (!isUnlocked() && !(await askUnlock())) return null;
-    lsSet("locked", set.filter((x) => x !== id)); toast("Chat unlocked."); return "unlocked";
+    lsSet("locked", set.filter((x) => x !== id)); dispatchEvent(new Event("locks-changed")); toast("Chat unlocked."); return "unlocked";
   }
   if (!(await ensureLockPin())) return null;
-  lsSet("locked", [...set, id]);
+  lsSet("locked", [...set, id]); dispatchEvent(new Event("locks-changed"));
   toast("Chat locked. Find it under “Locked chats” at the top of your chat list.");
   return "locked";
 }
