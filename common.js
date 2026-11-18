@@ -447,10 +447,11 @@ export function saveCache(now) {
 // This prevents a previous account's chats appearing on a shared device.
 export async function hydrate() { return false; }
 
+let liveChatsReady = false;
 async function hydrateAccountCache(uid) {
   try {
     const d = await idbGet("cache:" + uid);
-    if (!d || !me || me.uid !== uid) return false;
+    if (!d || !me || me.uid !== uid || liveChatsReady) return false;
     chats = (d.chats || []).map((c) => ({...c, lastMessageAt: T(c.lastMessageAt), lastRead: unpackMs(c.lastRead), deliveredAt: unpackMs(c.deliveredAt), deletedAt: unpackMs(c.deletedAt)}));
     for (const u in d.people || {}) people[u] = {...d.people[u], lastActive: T(d.people[u].lastActive)};
     Object.assign(contacts, d.contacts || {});
@@ -500,6 +501,7 @@ export function startSession(onReady) {
       hooks.render();
     });
     onSnapshot(query(collection(db, "chats"), where("participants", "array-contains", me.uid)), (s) => {
+      liveChatsReady = true;
       chats = s.docs.map((d) => ({id: d.id, ...d.data({serverTimestamps: "estimate"})}));
       chats.sort((a, b) => ms(b.lastMessageAt) - ms(a.lastMessageAt));
       chats.forEach((c) => watch(peerOf(c)));
