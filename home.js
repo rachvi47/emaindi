@@ -53,7 +53,7 @@ function renderList() {
       if (c.isGroup) {   // GROUP row
         const n = (c.unread && c.unread[me.uid]) || 0, t = ms(c.lastMessageAt), pinned = pins.includes(c.id);
         const who = c.lastSender ? (c.lastSender === me.uid ? "You" : nameOf(c.lastSender)) + ": " : "";
-        return `<button class="row" data-chat="1" data-gid="${esc(c.id)}">${groupAvatar(c.id, c.name)}<div class="meta">
+        return `<button class="row" data-chat="1" data-gid="${esc(c.id)}">${groupAvatar(c.id, c.name, "", c.photo)}<div class="meta">
         <div class="line1"><span class="nm">${esc(c.name || "Group")}</span><span class="tm ${n ? "new" : ""}">${listTime(t)}</span></div>
         <div class="line2"><span class="pv">${esc(who + preview(c))}</span>${(n || pinned) ? `<span style="display:flex;align-items:center;gap:6px">${pinned ? '<span style="font-size:12px">📌</span>' : ""}${n ? `<span class="badge">${n}</span>` : ""}</span>` : ""}</div></div></button>`;
       }
