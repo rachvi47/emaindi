@@ -63,7 +63,7 @@ async function begin(known) {
       .filter((m) => ms(m.createdAt) > ms(cur && cur.deletedAt && cur.deletedAt[me.uid]));      // after "delete chat"
     saveChatMessages(me.uid, cid, raw).catch((e) => console.warn("Could not update local message cache:", e));
     decodeAndShow();
-  }, console.error);
+  }, (err) => { console.error("Message sync failed:", err); toast("Messages could not sync: " + (err.code || err.message || "check your connection")); });
 }
 async function decodeAndShow() {
   const seq = ++snapSeq;
