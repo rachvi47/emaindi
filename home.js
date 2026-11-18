@@ -1,8 +1,8 @@
 // home.js - the chat list page. Opening a chat goes to chat.html.
-import {db, doc, getDocs, setDoc, query, collection, where, orderBy, limit, serverTimestamp} from "./fire.js";
+import {db, doc, getDocs, setDoc, updateDoc, query, collection, where, orderBy, limit, serverTimestamp} from "./fire.js";
 import {$, esc, ms, me, chats, people, hooks, watch, peerOf, chatId, visibleChat, nameOf, avatar, listTime, preview, isTyping,
   lockedIds, isLocked, isUnlocked, relock, askUnlock, changeLockPin, toggleLock, deleteChat, openModal, closeModal, onBack,
-  showInfo, startSession, saveCache, dialog, toast, fitViewport, groupAvatar, pickPeople, toggleLockById} from "./common.js";
+  showInfo, startSession, saveCache, dialog, toast, fitViewport, groupAvatar, pickPeople, toggleLockById, mySet} from "./common.js";
 import {initCalls} from "./call.js";
 // push.js is loaded only when needed, so the app still works even if that file is missing or broken
 const initPush = (uid) => import("./push.js").then((m) => m.initPush(uid)).catch((e) => console.warn("Push:", e));
@@ -158,6 +158,33 @@ function chatMenu(uid, gid) {
     if (a === "pin") { togglePin(cid); renderList(); }
     if (a === "lock") setTimeout(async () => { await toggleLockById(cid); renderList(); }, 250);
     if (a === "del") setTimeout(() => deleteChat(uid), 250);
+  };
+}
+
+/* ---------- top-right menu: Read all / Settings ---------- */
+function unreadChats() {
+  const locked = new Set(lockedIds());   // locked chats stay untouched
+  return chats.filter((c) => visibleChat(c) && !locked.has(c.id) && c.unread && c.unread[me.uid] > 0);
+}
+function readAll() {
+  const todo = unreadChats();
+  if (!todo.length) return toast("No unread messages.");
+  const quiet = !!mySet().noReceipts;   // with read receipts off, others don't get blue ticks
+  todo.forEach((c) => updateDoc(doc(db, "chats", c.id), quiet ? {["unread." + me.uid]: 0} : {["unread." + me.uid]: 0, ["lastRead." + me.uid]: serverTimestamp()}).catch(console.error));
+  toast(todo.length === 1 ? "1 chat marked as read." : todo.length + " chats marked as read.");
+}
+function homeMenu() {
+  const s = $("#sheet");
+  if (!s.hidden || !me) return;
+  const n = unreadChats().length;
+  s.innerHTML = `<div class="box"><button data-a="read">Read all${n ? " (" + n + ")" : ""}</button><button data-a="set">Settings</button><button data-a="x">Cancel</button></div>`;
+  openModal(s);
+  s.onclick = (ev) => {
+    const a = ev.target.dataset.a;
+    if (!a && ev.target !== s) return;
+    closeModal(s);
+    if (a === "read") readAll();
+    if (a === "set") setTimeout(() => (location.href = "settings.html"), 200);
   };
 }
 
@@ -332,7 +359,8 @@ async function showPerm() {
 history.replaceState({list: 1}, "");
 $("#meBtn").addEventListener("click", showMyQr);        // CHANGED: was showInfo(me.uid), now opens my QR code
 $("#scanBtn").addEventListener("click", openScan);
-$("#grpBtn").addEventListener("click", newGroup);   // GROUP: new group button      // NEW: scanner button
+$("#grpBtn").addEventListener("click", newGroup);
+$("#menuBtn").addEventListener("click", homeMenu);   // Read all / Settings   // GROUP: new group button      // NEW: scanner button
 startSession(() => {
   renderMe(); renderList();
   initCalls();
