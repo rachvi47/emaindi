@@ -9,7 +9,7 @@ initializeApp();
 const db = getFirestore();
 
 // >>> 1. Must match VAPID_PUBLIC_KEY in push.js. <<<
-const VAPID_PUBLIC_KEY = "PASTE_YOUR_VAPID_PUBLIC_KEY_HERE";
+const VAPID_PUBLIC_KEY = "BNYZQbMRbD-iwGc3d4ZsZArmE5DFk-KdTJ3QBm1HqxtI23srWMWZK9BUG5F90VMyPu3WKFKfqm4DOe2al-3QfTc";
 // >>> 2. Must be the same region as your Firestore database (Firebase console > Firestore > Data shows it).
 //        Examples: "us-central1", "asia-south1" (Mumbai), "europe-west1". <<<
 const REGION = "us-central1";
