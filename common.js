@@ -239,7 +239,7 @@ function listTime(t) {
 function avatar(uid, cls = "") {
   const u = people[uid] || {}, n = nameOf(uid);
   let h = 0; for (const ch of uid) h = (h * 31 + ch.charCodeAt(0)) % 360;
-  const inner = u.photoUrl ? `<img src="${esc(u.photoUrl)}" alt="" referrerpolicy="no-referrer">` : esc((n[0] || "?").toUpperCase());
+  const inner = u.photoUrl ? `<img src="${esc(u.photoUrl)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">` : esc((n[0] || "?").toUpperCase());
   return `<div class="av ${cls}" style="background:hsl(${h} 45% 42%)">${inner}${online(u) && !(me && uid === me.uid) ? '<i class="dot"></i>' : ""}</div>`;
 }
 
