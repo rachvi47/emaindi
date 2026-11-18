@@ -2,7 +2,7 @@
 import {db, doc, getDocs, query, collection, where, orderBy, limit} from "./fire.js";
 import {$, esc, ms, me, chats, people, hooks, watch, peerOf, chatId, visibleChat, nameOf, avatar, listTime, preview, isTyping,
   lockedIds, isLocked, isUnlocked, relock, askUnlock, changeLockPin, toggleLock, deleteChat, openModal, closeModal, onBack,
-  showInfo, hydrate, startSession, saveCache, dialog, toast, fitViewport} from "./common.js";
+  showInfo, startSession, saveCache, dialog, toast, fitViewport} from "./common.js";
 import {initCalls} from "./call.js";
 // push.js is loaded only when needed, so the app still works even if that file is missing or broken
 const initPush = (uid) => import("./push.js").then((m) => m.initPush(uid)).catch((e) => console.warn("Push:", e));
@@ -306,7 +306,6 @@ async function showPerm() {
 history.replaceState({list: 1}, "");
 $("#meBtn").addEventListener("click", showMyQr);        // CHANGED: was showInfo(me.uid), now opens my QR code
 $("#scanBtn").addEventListener("click", openScan);      // NEW: scanner button
-hydrate();
 startSession(() => {
   renderMe(); renderList();
   initCalls();
