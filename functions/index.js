@@ -50,10 +50,10 @@ exports.notifyNewMessage = onDocumentUpdated(
         if (!dev.sub) return;
         const locked = (dev.locked || []).includes(chatId);           // locked chats show no name or text
         const payload = JSON.stringify({
-          title: locked ? "emaindi" : name,
-          body: locked ? "New message" : preview,
+          title: locked ? "emaindi" : after.isGroup === true ? String(after.name || "Group") : name,
+          body: locked ? "New message" : after.isGroup === true ? name + ": " + preview : preview,
           tag: chatId,
-          url: "chat.html?u=" + encodeURIComponent(sender),
+          url: after.isGroup === true ? "chat.html?g=" + encodeURIComponent(chatId) : "chat.html?u=" + encodeURIComponent(sender),
         });
         try {
           await webpush.sendNotification(dev.sub, payload, {TTL: 86400, urgency: "high"});
