@@ -5,7 +5,7 @@ import {db, doc, setDoc, serverTimestamp} from "./fire.js";
 import {deleteDoc} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 // >>> PASTE YOUR VAPID PUBLIC KEY HERE (made with: npx web-push generate-vapid-keys). It is safe to be public. <<<
-export const VAPID_PUBLIC_KEY = "PASTE_YOUR_VAPID_PUBLIC_KEY_HERE";
+export const VAPID_PUBLIC_KEY = "BNYZQbMRbD-iwGc3d4ZsZArmE5DFk-KdTJ3QBm1HqxtI23srWMWZK9BUG5F90VMyPu3WKFKfqm4DOe2al-3QfTc";
 
 const supported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
 const configured = () => !VAPID_PUBLIC_KEY.startsWith("PASTE");
