@@ -4,7 +4,8 @@ import {$, esc, ms, me, chats, people, hooks, watch, peerOf, chatId, visibleChat
   lockedIds, isLocked, isUnlocked, relock, askUnlock, changeLockPin, toggleLock, deleteChat, openModal, closeModal, onBack,
   showInfo, hydrate, startSession, saveCache, dialog, toast, fitViewport} from "./common.js";
 import {initCalls} from "./call.js";
-import {initPush} from "./push.js";
+// push.js is loaded only when needed, so the app still works even if that file is missing or broken
+const initPush = (uid) => import("./push.js").then((m) => m.initPush(uid)).catch((e) => console.warn("Push:", e));
 
 let found = [], searchTimer = null, lockView = false, needRelock = false;
 
