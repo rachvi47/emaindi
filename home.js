@@ -1,8 +1,8 @@
 // home.js - the chat list page. Opening a chat goes to chat.html.
-import {db, doc, getDocs, query, collection, where, orderBy, limit} from "./fire.js";
+import {db, doc, getDocs, setDoc, query, collection, where, orderBy, limit, serverTimestamp} from "./fire.js";
 import {$, esc, ms, me, chats, people, hooks, watch, peerOf, chatId, visibleChat, nameOf, avatar, listTime, preview, isTyping,
   lockedIds, isLocked, isUnlocked, relock, askUnlock, changeLockPin, toggleLock, deleteChat, openModal, closeModal, onBack,
-  showInfo, startSession, saveCache, dialog, toast, fitViewport} from "./common.js";
+  showInfo, startSession, saveCache, dialog, toast, fitViewport, groupAvatar, pickPeople, toggleLockById} from "./common.js";
 import {initCalls} from "./call.js";
 // push.js is loaded only when needed, so the app still works even if that file is missing or broken
 const initPush = (uid) => import("./push.js").then((m) => m.initPush(uid)).catch((e) => console.warn("Push:", e));
@@ -35,6 +35,7 @@ function renderList() {
   const q = $("#q").value.trim().toLowerCase();
   const lockedSet = new Set(lockedIds());
   const rows = chats.filter(visibleChat).filter((c) => (lockView ? lockedSet.has(c.id) : !lockedSet.has(c.id))).filter((c) => {
+    if (c.isGroup) return !q || (c.name || "").toLowerCase().includes(q);   // GROUP: search by group name
     const o = peer(c), p = people[o] || {};
     return !q || [nameOf(o), p.phone, p.email].join(" ").toLowerCase().includes(q);
   });
@@ -49,6 +50,13 @@ function renderList() {
   if (rows.length) {
     if (q) h += '<div class="sec">Chats</div>';
     h += rows.map((c) => {
+      if (c.isGroup) {   // GROUP row
+        const n = (c.unread && c.unread[me.uid]) || 0, t = ms(c.lastMessageAt), pinned = pins.includes(c.id);
+        const who = c.lastSender ? (c.lastSender === me.uid ? "You" : nameOf(c.lastSender)) + ": " : "";
+        return `<button class="row" data-chat="1" data-gid="${esc(c.id)}">${groupAvatar(c.id, c.name)}<div class="meta">
+        <div class="line1"><span class="nm">${esc(c.name || "Group")}</span><span class="tm ${n ? "new" : ""}">${listTime(t)}</span></div>
+        <div class="line2"><span class="pv">${esc(who + preview(c))}</span>${(n || pinned) ? `<span style="display:flex;align-items:center;gap:6px">${pinned ? '<span style="font-size:12px">📌</span>' : ""}${n ? `<span class="badge">${n}</span>` : ""}</span>` : ""}</div></div></button>`;
+      }
       const o = peer(c), self = o === me.uid;
       const n = self ? 0 : (c.unread && c.unread[me.uid]) || 0, mine = !self && c.lastSender === me.uid;   // self chat: no unread badge, no tick
       const t = ms(c.lastMessageAt), pinned = pins.includes(c.id);
@@ -61,6 +69,10 @@ function renderList() {
 }
 hooks.render = renderList;
 
+async function openGroup(gid) {   // GROUP
+  if (isLocked(gid) && !isUnlocked() && !(await askUnlock())) return;
+  location.href = "chat.html?g=" + encodeURIComponent(gid);
+}
 async function openChat(uid) {
   if (isLocked(chatId(me.uid, uid)) && !isUnlocked() && !(await askUnlock())) return;
   location.href = "chat.html?u=" + encodeURIComponent(uid);
@@ -73,7 +85,7 @@ rowsEl.addEventListener("click", (e) => {
   const lk = e.target.closest("[data-lk]");
   if (lk) return lockAction(lk.dataset.lk);
   const r = e.target.closest(".row");
-  if (r) openChat(r.dataset.uid).catch((err) => { console.error(err); toast("Could not open chat: " + (err.code || err.message)); });
+  if (r) (r.dataset.gid ? openGroup(r.dataset.gid) : openChat(r.dataset.uid)).catch((err) => { console.error(err); toast("Could not open chat: " + (err.code || err.message)); });
 });
 $("#q").addEventListener("input", () => {
   renderList();
@@ -128,25 +140,39 @@ document.addEventListener("visibilitychange", async () => {
 rowsEl.addEventListener("pointerdown", (e) => {
   const r = e.target.closest(".row[data-chat]"); if (!r) return;
   lpFired = false; lpX = e.clientX; lpY = e.clientY;
-  lpTimer = setTimeout(() => { lpFired = true; chatMenu(r.dataset.uid); }, 550);
+  lpTimer = setTimeout(() => { lpFired = true; chatMenu(r.dataset.uid, r.dataset.gid); }, 550);
 });
 ["pointerup", "pointercancel", "pointerleave"].forEach((t) => rowsEl.addEventListener(t, () => clearTimeout(lpTimer)));
 rowsEl.addEventListener("pointermove", (e) => { if (Math.abs(e.clientX - lpX) > 8 || Math.abs(e.clientY - lpY) > 8) clearTimeout(lpTimer); });
-rowsEl.addEventListener("contextmenu", (e) => { const r = e.target.closest(".row[data-chat]"); if (r) { e.preventDefault(); chatMenu(r.dataset.uid); } });
-function chatMenu(uid) {
+rowsEl.addEventListener("contextmenu", (e) => { const r = e.target.closest(".row[data-chat]"); if (r) { e.preventDefault(); chatMenu(r.dataset.uid, r.dataset.gid); } });
+function chatMenu(uid, gid) {
   const s = $("#sheet");
   if (!s.hidden) return;
-  const cid = chatId(me.uid, uid);
-  s.innerHTML = `<div class="box"><button data-a="pin">${isPinned(cid) ? "Unpin chat" : "Pin chat"}</button><button data-a="lock">${isLocked(cid) ? "Unlock chat" : "Lock chat"}</button><button data-a="del" class="danger">Delete chat</button><button data-a="x">Cancel</button></div>`;
+  const cid = gid || chatId(me.uid, uid);
+  s.innerHTML = `<div class="box"><button data-a="pin">${isPinned(cid) ? "Unpin chat" : "Pin chat"}</button><button data-a="lock">${isLocked(cid) ? "Unlock chat" : "Lock chat"}</button>${gid ? "" : '<button data-a="del" class="danger">Delete chat</button>'}<button data-a="x">Cancel</button></div>`;
   openModal(s);
   s.onclick = (ev) => {
     const a = ev.target.dataset.a;
     if (!a && ev.target !== s) return;
     closeModal(s);
     if (a === "pin") { togglePin(cid); renderList(); }
-    if (a === "lock") setTimeout(async () => { await toggleLock(uid); renderList(); }, 250);
+    if (a === "lock") setTimeout(async () => { await toggleLockById(cid); renderList(); }, 250);
     if (a === "del") setTimeout(() => deleteChat(uid), 250);
   };
+}
+
+/* ---------- GROUPS: create a new group ---------- */
+async function newGroup() {
+  if (!me) return;
+  const r = await pickPeople({title: "New group", ok: "Create", nameField: true});
+  if (!r) return;
+  if (r.ids.length > 99) return toast("A group can have up to 100 people.");
+  try {
+    const ref = doc(collection(db, "chats"));
+    await setDoc(ref, {isGroup: true, name: r.name.slice(0, 60), participants: [me.uid, ...r.ids], admins: [me.uid], createdBy: me.uid,
+      createdAt: serverTimestamp(), lastMessage: "Group created", lastMessageAt: serverTimestamp(), lastSender: me.uid, unread: {}});
+    location.href = "chat.html?g=" + encodeURIComponent(ref.id);
+  } catch (err) { console.error(err); toast("Could not create the group: " + (err.code || err.message)); }
 }
 
 /* ---------- NEW: my QR code + QR scanner ---------- */
@@ -305,7 +331,8 @@ async function showPerm() {
 /* ---------- start ---------- */
 history.replaceState({list: 1}, "");
 $("#meBtn").addEventListener("click", showMyQr);        // CHANGED: was showInfo(me.uid), now opens my QR code
-$("#scanBtn").addEventListener("click", openScan);      // NEW: scanner button
+$("#scanBtn").addEventListener("click", openScan);
+$("#grpBtn").addEventListener("click", newGroup);   // GROUP: new group button      // NEW: scanner button
 startSession(() => {
   renderMe(); renderList();
   initCalls();
