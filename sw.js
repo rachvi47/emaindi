@@ -1,6 +1,6 @@
 // Service worker: keeps the app files on the phone so the app opens instantly (even offline) and shows notifications.
-const CACHE = "emaindi-v5";   // CHANGED: bumped so every phone drops the old broken cache and downloads a fresh one
-const SHELL = ["./", "index.html", "index.js", "login.html", "login.js", "login-extra.css", "home.html", "home.js", "home.css", "chat.html", "chat.js", "chat.css", "common.js", "call.js", "settings.html", "style.css", "fire.js", "manifest.json", "icon-192.png", "icon-512.png"];
+const CACHE = "emaindi-v6";   // CHANGED: bumped so every phone drops the old broken cache and downloads a fresh one
+const SHELL = ["./", "index.html", "index.js", "login.html", "login.js", "login-extra.css", "home.html", "home.js", "home.css", "chat.html", "chat.js", "chat.css", "common.js", "call.js", "settings.html", "style.css", "fire.js", "manifest.json", "icon-192.png", "icon-512.png", "push.js"];
 // FIXED: the first entry was a broken markdown link, so the Firebase SDK was never cached.
 // ADDED: common CDN hosts so the QR code / QR scanner libraries also load offline.
 const CROSS = ["www.gstatic.com", "fonts.googleapis.com", "fonts.gstatic.com", "cdnjs.cloudflare.com", "cdn.jsdelivr.net", "unpkg.com"];
@@ -48,12 +48,36 @@ self.addEventListener("fetch", (e) => {
   }
 });
 
+// NEW: a push arrived from the server (this works even when the app is closed)
+self.addEventListener("push", (e) => {
+  let p = {};
+  try { p = e.data ? e.data.json() : {}; } catch (_) { p = {body: e.data ? e.data.text() : ""}; }
+  e.waitUntil((async () => {
+    // if you are looking at the app right now, the app itself already shows the message
+    const wins = await clients.matchAll({type: "window", includeUncontrolled: true});
+    if (wins.some((w) => w.visibilityState === "visible" && w.focused)) return;
+    await self.registration.showNotification(p.title || "emaindi", {
+      body: p.body || "New message",
+      tag: p.tag || "emaindi",          // one notification per chat; a newer message replaces the older one
+      renotify: true,
+      icon: "icon-192.png",
+      badge: "icon-192.png",
+      data: {url: p.url || "home.html"},
+    });
+  })());
+});
+
+// CHANGED: tapping a notification opens that chat
 self.addEventListener("notificationclick", (e) => {
   e.notification.close();
+  const url = new URL((e.notification.data && e.notification.data.url) || "home.html", self.registration.scope).href;
   e.waitUntil(
-    clients.matchAll({type: "window", includeUncontrolled: true}).then((list) => {
-      for (const c of list) if ("focus" in c) return c.focus();
-      return clients.openWindow("home.html");
+    clients.matchAll({type: "window", includeUncontrolled: true}).then(async (list) => {
+      for (const c of list) {
+        if (!("focus" in c)) continue;
+        try { await c.focus(); if ("navigate" in c) await c.navigate(url); return; } catch (_) {}
+      }
+      return clients.openWindow(url);
     })
   );
 });
