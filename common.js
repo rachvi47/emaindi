@@ -474,7 +474,7 @@ export function startSession(onReady) {
     started = true;
     me = user;
     // Render the last saved chat list before opening live Firestore listeners.
-    await hydrateAccountCache(user.uid);
+    await Promise.race([hydrateAccountCache(user.uid), new Promise((resolve) => setTimeout(resolve, 700))]);
     try {
       if (!localStorage.getItem("lastUid")) { localStorage.removeItem("lockpin:" + user.uid); localStorage.removeItem("locked:" + user.uid); }   // new login resets chat lock
       localStorage.setItem("lastUid", user.uid);
