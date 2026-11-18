@@ -1,5 +1,5 @@
 // Service worker: keeps the app files on the phone so the app opens instantly (even offline) and shows notifications.
-const CACHE = "emaindi-v11";   // CHANGED: bumped so every phone drops the old broken cache and downloads a fresh one
+const CACHE = "emaindi-v12";   // bumped so every phone drops the old broken home.js and downloads the fixed one
 const SHELL = ["./", "index.html", "splash.js", "offline.js", "login.html", "login.js", "login-extra.css", "home.html", "home.js", "home.css", "chat.html", "chat.js", "chat.css", "common.js", "call.js", "settings.html", "style.css", "fire.js", "manifest.json", "icon-192.png", "icon-512.png", "push.js"];
 // FIXED: the first entry was a broken markdown link, so the Firebase SDK was never cached.
 // ADDED: common CDN hosts so the QR code / QR scanner libraries also load offline.
@@ -34,7 +34,7 @@ self.addEventListener("fetch", (e) => {
           return res;
         }).catch(() => null);
         if (hit) { e.waitUntil(net); return hit; }
-        return net.then((res) => res || caches.match("home.html"));
+        return net.then((res) => res || (req.mode === "navigate" ? caches.match("home.html") : Response.error()));   // only pages fall back to home.html; a missing .js must not be answered with HTML
       })
     );
   } else {
