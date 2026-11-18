@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#101b34">
+  <meta name="description" content="Emaindi — simple, private conversations.">
+  <title>Emaindi</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <header class="brandbar">
+        <a class="brand" href="./index.html">emaindi<span>.</span></a>
+        <button class="icon-btn" id="logout" title="Sign out" aria-label="Sign out">↗</button>
+      </header>
+      <div class="account-strip"><div class="avatar" id="my-avatar">E</div><div class="account-copy"><strong id="my-name">Connecting…</strong><small id="sync-state">Connecting to Firebase</small></div></div>
+      <label class="search-wrap"><span>⌕</span><input id="search" type="search" placeholder="Search chats or find a person" autocomplete="off"></label>
+      <div class="section-label" id="list-label">YOUR CHATS</div>
+      <div id="chat-list" class="chat-list"><div class="state-card">Loading your conversations…</div></div>
+      <div class="sidebar-foot">Your existing conversations stay in your Firebase account.</div>
+    </aside>
+    <main class="conversation" id="conversation">
+      <section class="welcome" id="welcome">
+        <div class="welcome-mark">e<span>.</span></div>
+        <h1>Good conversations<br>start here.</h1>
+        <p>Choose a chat, or search by email or phone number to find someone.</p>
+      </section>
+      <section class="thread" id="thread" hidden>
+        <header class="thread-head">
+          <button class="icon-btn mobile-back" id="back" aria-label="Back to chats">←</button>
+          <div class="avatar" id="peer-avatar">?</div>
+          <div class="peer-copy"><strong id="peer-name">Conversation</strong><small id="peer-detail">Emaindi chat</small></div>
+          <span class="live-pill" id="thread-state">LIVE</span>
+        </header>
+        <div class="message-list" id="messages"><div class="state-card">Loading messages…</div></div>
+        <form class="composer" id="composer">
+          <textarea id="message-input" rows="1" maxlength="5000" placeholder="Write a message…" aria-label="Message"></textarea>
+          <button class="send-btn" type="submit" aria-label="Send message">↑</button>
+        </form>
+      </section>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
