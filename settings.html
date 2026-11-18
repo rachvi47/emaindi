@@ -118,7 +118,12 @@ main{max-width:34rem;margin:0 auto;padding:1rem 1rem 3rem}
 import {auth,db,onAuthStateChanged,signOut,updateProfile,doc,getDoc,setDoc,collection,getDocs} from "./fire.js";
 import {deleteUser,EmailAuthProvider,reauthenticateWithCredential,reauthenticateWithPopup,GoogleAuthProvider,RecaptchaVerifier,reauthenticateWithPhoneNumber,PhoneAuthProvider,updatePhoneNumber,linkWithCredential,updatePassword} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import {deleteDoc} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-import {enablePush, disablePush, detachPush, pushStatus} from "./push.js";   // NEW: notifications when the app is closed
+// NEW: notifications when the app is closed. push.js is loaded only when needed, so Settings still works without it.
+const push = () => import("./push.js");
+const pushStatus = async (uid) => { try { return await (await push()).pushStatus(uid); } catch (e) { return "unsupported"; } };
+const enablePush = async (uid) => (await push()).enablePush(uid);
+const disablePush = async (uid) => (await push()).disablePush(uid);
+const detachPush = async (uid) => { try { await (await push()).detachPush(uid); } catch (e) {} };
 
 const $ = (s) => document.querySelector(s);
 let me, ref, photo = "", toastT;
