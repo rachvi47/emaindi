@@ -443,21 +443,28 @@ export function saveCache(now) {
   };
   if (now) run(); else saveT = setTimeout(run, 800);
 }
-export async function hydrate() {
-  let uid = null; try { uid = localStorage.getItem("lastUid"); } catch (e) {}
-  if (!uid) return;
-  let d = null; try { d = await idbGet("cache:" + uid); } catch (e) {}
-  if (!d || started) return;                       // real data already arrived
-  me = {uid, cached: true};
-  chats = (d.chats || []).map((c) => ({...c, lastMessageAt: T(c.lastMessageAt), lastRead: unpackMs(c.lastRead), deliveredAt: unpackMs(c.deliveredAt), deletedAt: unpackMs(c.deletedAt)}));
-  for (const u in d.people || {}) people[u] = {...d.people[u], lastActive: T(d.people[u].lastActive)};
-  Object.assign(contacts, d.contacts || {});
-  hooks.meChanged(); hooks.render();
+// Cache hydration happens only after Firebase confirms the signed-in UID.
+// This prevents a previous account's chats appearing on a shared device.
+export async function hydrate() { return false; }
+
+async function hydrateAccountCache(uid) {
+  try {
+    const d = await idbGet("cache:" + uid);
+    if (!d || !me || me.uid !== uid) return false;
+    chats = (d.chats || []).map((c) => ({...c, lastMessageAt: T(c.lastMessageAt), lastRead: unpackMs(c.lastRead), deliveredAt: unpackMs(c.deliveredAt), deletedAt: unpackMs(c.deletedAt)}));
+    for (const u in d.people || {}) people[u] = {...d.people[u], lastActive: T(d.people[u].lastActive)};
+    Object.assign(contacts, d.contacts || {});
+    hooks.meChanged(); hooks.render();
+    return true;
+  } catch (e) {
+    console.warn("Offline chat-list cache unavailable:", e);
+    return false;
+  }
 }
 
 /* ---------- start-up (login check, presence, live data) ---------- */
 export function startSession(onReady) {
-  onAuthStateChanged(auth, (user) => {
+  onAuthStateChanged(auth, async (user) => {
     if (!user) {
       // a saved login can take a moment to load: only go to login if there is still nobody after a short wait
       setTimeout(() => { if (!auth.currentUser) { try { localStorage.removeItem("lastUid"); } catch (e) {} location.replace("login.html"); } }, 2500);
@@ -466,6 +473,8 @@ export function startSession(onReady) {
     if (started) return;
     started = true;
     me = user;
+    // Render the last saved chat list before opening live Firestore listeners.
+    await hydrateAccountCache(user.uid);
     try {
       if (!localStorage.getItem("lastUid")) { localStorage.removeItem("lockpin:" + user.uid); localStorage.removeItem("locked:" + user.uid); }   // new login resets chat lock
       localStorage.setItem("lastUid", user.uid);
