@@ -65,7 +65,9 @@ function beep() {
 // CHANGED: in a chat with yourself there is no "other" person, so fall back to your own uid
 const peerOf = (c) => (c.isGroup ? c.id : c.participants.find((u) => u !== me.uid) || me.uid);   // GROUP: a group has no single "other person", so its own id is used
 const chatId = (a, b) => [a, b].sort().join("_");
-const visibleChat = (c) => !!c && Array.isArray(c.participants) && !!me && c.participants.includes(me.uid); // Recovery: do not hide existing cloud chats because of stale deletedAt/lastMessage metadata.
+// a chat you deleted stays hidden until a NEW message arrives in it (deletedAt is newer than the last message)
+const visibleChat = (c) => !!c && Array.isArray(c.participants) && !!me && c.participants.includes(me.uid)
+  && !(c.deletedAt && c.deletedAt[me.uid] && ms(c.deletedAt[me.uid]) >= ms(c.lastMessageAt));
 const nameOf = (uid) => (contacts[uid] && contacts[uid].name) || (people[uid] && (people[uid].name || people[uid].phone || people[uid].email)) || "Unknown";
 const numberOf = (uid) => (people[uid] && (people[uid].phone || people[uid].email)) || "";
 
@@ -367,9 +369,27 @@ export async function toggleLockById(id) {   // GROUP: groups are locked by thei
 }
 export async function deleteChat(uid) {
   const id = chatId(me.uid, uid);
-  const ok = await dialog({title: "Delete this chat?", text: "It is removed from your list and your device only. The other person keeps their copy.", ok: "Delete", danger: true});
+  const ok = await dialog({title: "Delete this chat?", text: "It is removed from your chat list. The other person keeps their copy. The chat comes back if a new message arrives.", ok: "Delete", danger: true});
   if (!ok) return false;
   updateDoc(doc(db, "chats", id), {["deletedAt." + me.uid]: serverTimestamp(), ["unread." + me.uid]: 0}).catch((err) => { console.error(err); toast("Could not delete the chat."); });
+  return true;
+}
+
+/* ---------- blocking (1:1 chats). The block list is private: users/{me}/private/blocked ---------- */
+let blockedSet = new Set();
+export const isBlocked = (uid) => blockedSet.has(uid);
+export async function toggleBlock(uid) {
+  if (!me || uid === me.uid) return false;
+  const on = blockedSet.has(uid);
+  if (!on) {
+    const ok = await dialog({title: "Block " + nameOf(uid) + "?", text: "They won't be able to send you messages or call you, and you can't message them while they are blocked. They are not told. You can unblock any time.", ok: "Block", danger: true});
+    if (!ok) return false;
+  }
+  const next = on ? [...blockedSet].filter((x) => x !== uid) : [...blockedSet, uid];
+  blockedSet = new Set(next); hooks.render();   // show it at once
+  try { await setDoc(doc(db, "users", me.uid, "private", "blocked"), {uids: next}, {merge: true}); }
+  catch (err) { console.error(err); toast("Could not " + (on ? "unblock" : "block") + " this contact."); blockedSet = new Set(on ? [...next, uid] : next.filter((x) => x !== uid)); hooks.render(); return false; }
+  toast(on ? nameOf(uid) + " unblocked." : nameOf(uid) + " blocked.");
   return true;
 }
 
@@ -532,6 +552,10 @@ export function startSession(onReady) {
     document.addEventListener("visibilitychange", () => pres(!document.hidden));
     addEventListener("pagehide", () => pres(false));
 
+    onSnapshot(doc(db, "users", me.uid, "private", "blocked"), (s) => {   // who I have blocked
+      blockedSet = new Set(s.exists() ? s.data().uids || [] : []);
+      hooks.render();
+    }, () => {});
     onSnapshot(collection(db, "users", me.uid, "contacts"), (s) => {
       for (const k of Object.keys(contacts)) delete contacts[k];
       s.docs.forEach((d) => { if (d.id !== "_keybackup") contacts[d.id] = d.data(); });
