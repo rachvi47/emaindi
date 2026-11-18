@@ -91,6 +91,12 @@ main{max-width:34rem;margin:0 auto;padding:1rem 1rem 3rem}
     <button class="row" id="notif"><div>Notifications<small id="nstat">Checking…</small></div></button>
   </section>
 
+  <section class="card"><h2>Storage &amp; data</h2>
+    <div class="row" style="display:block"><div><b id="cachecount">Checking offline cache…</b><small id="storageusage">Checking device storage…</small></div></div>
+    <p class="hint">Recent messages and media are saved on this device for faster opening and offline access. Your cloud conversations are not deleted when you clear this local cache.</p>
+    <button class="save" id="clearcache" type="button">Clear offline message cache</button>
+  </section>
+
   <section class="card"><h2>Help</h2>
     <button class="row" id="invite"><div>Invite a friend<small>Share emaindi with someone</small></div></button>
     <button class="row" id="about"><div>About emaindi<small>Version 1.0 · from Tohnna Corporation</small></div></button>
@@ -116,6 +122,7 @@ main{max-width:34rem;margin:0 auto;padding:1rem 1rem 3rem}
 
 <script type="module">
 import {auth,db,onAuthStateChanged,signOut,updateProfile,doc,getDoc,setDoc,collection,getDocs} from "./fire.js";
+import {offlineCacheStats, offlineStorageEstimate, clearAccountOfflineMessages} from "./offline.js";
 import {deleteUser,EmailAuthProvider,reauthenticateWithCredential,reauthenticateWithPopup,GoogleAuthProvider,RecaptchaVerifier,reauthenticateWithPhoneNumber,PhoneAuthProvider,updatePhoneNumber,linkWithCredential,updatePassword} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import {deleteDoc} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 // NEW: notifications when the app is closed. push.js is loaded only when needed, so Settings still works without it.
@@ -134,6 +141,23 @@ function toast(t) {
   const m = $("#msg"); m.textContent = t; m.hidden = false;
   clearTimeout(toastT); toastT = setTimeout(() => (m.hidden = true), 2800);
 }
+
+const formatBytes = (n) => n < 1024 * 1024 ? (n / 1024).toFixed(0) + " KB" : (n / (1024 * 1024)).toFixed(1) + " MB";
+async function refreshStorage() {
+  if (!me) return;
+  try {
+    const [cache, estimate] = await Promise.all([offlineCacheStats(me.uid), offlineStorageEstimate()]);
+    $("#cachecount").textContent = cache.count + " recent messages cached on this device";
+    $("#storageusage").textContent = estimate && estimate.usage != null
+      ? formatBytes(estimate.usage) + " used by this site · " + (estimate.quota ? formatBytes(estimate.quota) + " available quota" : "browser-managed quota")
+      : formatBytes(cache.bytes) + " estimated offline message cache";
+  } catch (e) {
+    console.warn("Storage info:", e);
+    $("#cachecount").textContent = "Offline cache information unavailable";
+    $("#storageusage").textContent = "Your browser manages local storage.";
+  }
+}
+
 function ask({title, text = "", input = "", ok = "OK", cancel = true, danger = false}) {
   return new Promise((res) => {
     const d = $("#dlg");
@@ -156,6 +180,7 @@ const setSw = (el, on) => el.querySelector(".sw").classList.toggle("on", on);
 onAuthStateChanged(auth, async (user) => {
   if (!user) { setTimeout(() => { if (!auth.currentUser) location.replace("login.html"); }, 2500); return; }
   me = user; ref = doc(db, "users", me.uid);
+  refreshStorage();
   let d = {};
   try { const s = await getDoc(ref); d = s.exists() ? s.data() : {}; } catch (e) { console.error(e); }
   $("#name").value = d.name || me.displayName || "";
@@ -265,6 +290,21 @@ $("#pwsave").addEventListener("click", async () => {
       : "Could not save the password.");
   }
   $("#pwsave").disabled = false;
+});
+
+$("#clearcache").addEventListener("click", async () => {
+  if (!me) return;
+  const ok = await ask({title: "Clear offline message cache?", text: "This removes recent message and media copies from this device only. Your conversations in the cloud are not deleted. They will be cached again as you open chats.", ok: "Clear cache", danger: true});
+  if (!ok) return;
+  $("#clearcache").disabled = true;
+  try {
+    await clearAccountOfflineMessages(me.uid);
+    toast("Offline message cache cleared. Cloud chats are safe.");
+    await refreshStorage();
+  } catch (e) {
+    console.error(e); toast("Could not clear the local cache.");
+  }
+  $("#clearcache").disabled = false;
 });
 
 /* notifications / invite / about */
