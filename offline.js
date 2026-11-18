@@ -4,6 +4,8 @@ const DB_NAME = "emaindi-offline-v1";
 const DB_VERSION = 1;
 const MAX_MESSAGES_PER_CHAT = 200;
 const MAX_CHAT_CACHE_BYTES = 20 * 1024 * 1024;
+const MAX_ACCOUNT_CACHE_BYTES = 50 * 1024 * 1024;
+const MAX_ACCOUNT_CACHE_MESSAGES = 2000;
 
 let dbPromise;
 function openDB() {
@@ -72,6 +74,40 @@ export async function saveChatMessages(uid, cid, messages) {
     tx.oncomplete = resolve;
     tx.onerror = () => reject(tx.error || new Error("Could not save offline messages"));
     tx.onabort = () => reject(tx.error || new Error("Offline message cache was aborted"));
+  });
+  await enforceAccountBudget(uid, db);
+}
+
+async function enforceAccountBudget(uid, db) {
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction("messages", "readwrite");
+    const store = tx.objectStore("messages");
+    const req = store.openCursor();
+    const rows = [];
+    let total = 0;
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (cursor) {
+        const row = cursor.value;
+        if (row.key.startsWith(uid + "::")) {
+          let size = 0; try { size = new Blob([JSON.stringify(row)]).size; } catch (e) {}
+          rows.push({key: row.key, size, createdAtMs: row.createdAtMs || 0, pending: !!row.pending});
+          total += size;
+        }
+        cursor.continue();
+        return;
+      }
+      let count = rows.length;
+      rows.sort((a, b) => a.createdAtMs - b.createdAtMs);
+      for (const row of rows) {
+        if (total <= MAX_ACCOUNT_CACHE_BYTES && count <= MAX_ACCOUNT_CACHE_MESSAGES) break;
+        if (row.pending) continue; // never evict a message Firestore has not acknowledged yet
+        store.delete(row.key);
+        total -= row.size; count--;
+      }
+    };
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error || new Error("Could not trim offline cache"));
   });
 }
 
