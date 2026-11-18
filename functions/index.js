@@ -44,6 +44,10 @@ exports.notifyNewMessage = onDocumentUpdated(
     const preview = !last || last.startsWith("e2e:") ? "New message" : last.slice(0, 120);
 
     for (const r of recipients) {
+      if (after.isGroup !== true) {   // 1:1: no notification if this person blocked the sender
+        const bl = await db.doc(`users/${r}/private/blocked`).get();
+        if (bl.exists && (bl.data().uids || []).includes(sender)) continue;
+      }
       const [name, devices] = await Promise.all([senderName(r, sender), db.collection(`users/${r}/devices`).get()]);
       await Promise.all(devices.docs.map(async (d) => {
         const dev = d.data();
