@@ -275,3 +275,13 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .typing span { animation: none; opacity: 0.7; }
 }
+
+/* Smooth same-origin page transitions (Chrome/Edge supporting cross-document View Transitions). */
+@view-transition { navigation: auto; }
+::view-transition-old(root) { animation: 180ms ease-out both page-out; }
+::view-transition-new(root) { animation: 240ms ease-out both page-in; }
+@keyframes page-out { to { opacity: 0; transform: scale(.992); } }
+@keyframes page-in { from { opacity: 0; transform: scale(1.008); } to { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root), ::view-transition-new(root) { animation-duration: 1ms; }
+}
