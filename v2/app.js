@@ -54,7 +54,7 @@ async function searchPeople(term){
   const email=trimmed.includes("@"),digits=trimmed.replace(/[\s().-]/g,"");
   if(!email&&!/^\+?\d{6,15}$/.test(digits)){renderChats();return}
   try{
-    const q=email?query(collection(db,"users"),where("email","==",trimmed.toLowerCase())):query(collection(db,"users"),where("phone","==",digits.startsWith("+")?digits:"+"+digits));
+    const q=email?query(collection(db,"users"),where("email","==",trimmed.toLowerCase())):query(collection(db,"users"),where("phone","in",[digits,"+"+digits.replace(/^\\+/,"")]));
     const snap=await getDocs(q);const users=snap.docs.map(d=>({uid:d.id,...d.data()})).filter(u=>u.uid!==state.user.uid);
     if(!users.length){renderChats();toast("No account found for that email or phone number.");return}
     users.forEach(u=>state.people[u.uid]=u);
