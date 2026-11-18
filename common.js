@@ -65,7 +65,7 @@ function beep() {
 // CHANGED: in a chat with yourself there is no "other" person, so fall back to your own uid
 const peerOf = (c) => c.participants.find((u) => u !== me.uid) || me.uid;
 const chatId = (a, b) => [a, b].sort().join("_");
-const visibleChat = (c) => !!c.lastMessage && ms(c.lastMessageAt) > ms(c.deletedAt && c.deletedAt[me.uid]);
+const visibleChat = (c) => !!c && Array.isArray(c.participants) && !!me && c.participants.includes(me.uid); // Recovery: do not hide existing cloud chats because of stale deletedAt/lastMessage metadata.
 const nameOf = (uid) => (contacts[uid] && contacts[uid].name) || (people[uid] && (people[uid].name || people[uid].phone || people[uid].email)) || "Unknown";
 const numberOf = (uid) => (people[uid] && (people[uid].phone || people[uid].email)) || "";
 
@@ -508,7 +508,7 @@ export function startSession(onReady) {
       const tchg = trackTyping();
       notifyNew(); markDelivered();
       hooks.chatsChanged(tchg); hooks.render(); saveCache();
-    }, console.error);
+    }, (err) => { console.error("Chat sync failed:", err); toast("Chats could not sync: " + (err.code || err.message || "check your connection")); });
     onReady();
   });
 }
