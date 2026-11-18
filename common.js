@@ -63,7 +63,7 @@ function beep() {
 
 
 // CHANGED: in a chat with yourself there is no "other" person, so fall back to your own uid
-const peerOf = (c) => c.participants.find((u) => u !== me.uid) || me.uid;
+const peerOf = (c) => (c.isGroup ? c.id : c.participants.find((u) => u !== me.uid) || me.uid);   // GROUP: a group has no single "other person", so its own id is used
 const chatId = (a, b) => [a, b].sort().join("_");
 const visibleChat = (c) => !!c && Array.isArray(c.participants) && !!me && c.participants.includes(me.uid); // Recovery: do not hide existing cloud chats because of stale deletedAt/lastMessage metadata.
 const nameOf = (uid) => (contacts[uid] && contacts[uid].name) || (people[uid] && (people[uid].name || people[uid].phone || people[uid].email)) || "Unknown";
@@ -243,6 +243,39 @@ function avatar(uid, cls = "") {
   return `<div class="av ${cls}" style="background:hsl(${h} 45% 42%)">${inner}${online(u) && !(me && uid === me.uid) ? '<i class="dot"></i>' : ""}</div>`;
 }
 
+/* ---------- GROUPS: group picture + people picker ---------- */
+export function groupAvatar(id, name, cls = "") {
+  let h = 0; for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return `<div class="av ${cls}" style="background:hsl(${h} 45% 42%)">👥</div>`;
+}
+// Shows a list of people you already chat with (or saved as contacts) with check boxes.
+// Resolves {ids, name} when you press the button, or null when cancelled.
+export function pickPeople({title, ok = "Add", exclude = [], nameField = false}) {
+  return new Promise((res) => {
+    const ids = new Set(Object.keys(contacts));
+    chats.forEach((c) => { if (!c.isGroup) { const o = peerOf(c); if (o && o !== me.uid) ids.add(o); } });
+    [...exclude, me.uid].forEach((u) => ids.delete(u));
+    const list = [...ids];
+    list.forEach((u) => watch(u));
+    const rows = list.length ? list.map((u) => `<label style="display:flex;align-items:center;gap:10px;padding:8px 2px;cursor:pointer"><input type="checkbox" value="${esc(u)}" style="width:18px;height:18px;flex:none">${avatar(u, "sm")}<span style="min-width:0">${esc(nameOf(u))}<small style="display:block;opacity:.6">${esc(numberOf(u))}</small></span></label>`).join("")
+      : '<p style="opacity:.7">Nobody to add yet. Start a chat with someone first, then you can add them to a group.</p>';
+    const d = $("#dlg");
+    d.innerHTML = `<div class="dbox"><h3>${esc(title)}</h3>${nameField ? '<input id="gNm" type="text" placeholder="Group name" maxlength="60" autocomplete="off">' : ""}<div style="max-height:45vh;overflow:auto;text-align:left;margin:8px 0">${rows}</div><div class="dact"><button data-a="c">Cancel</button><button data-a="o">${esc(ok)}</button></div></div>`;
+    d.hidden = false;
+    const done = (v) => { d.hidden = true; d.onclick = null; res(v); };
+    d.onclick = (e) => {
+      const a = e.target.dataset.a;
+      if (a === "o") {
+        const picked = [...d.querySelectorAll('input[type="checkbox"]:checked')].map((x) => x.value);
+        const nm = nameField ? ($("#gNm").value || "").trim() : "";
+        if (nameField && !nm) return toast("Enter a group name.");
+        if (!picked.length) return toast("Select at least one person.");
+        done({ids: picked, name: nm});
+      } else if (a === "c" || e.target === d) done(null);
+    };
+  });
+}
+
 /* ---------- watch other people's profiles ---------- */
 let presOn = false;
 export const pres = (on) => setDoc(doc(db, "users", me.uid), mySet().hideOnline ? {online: false} : {online: on, lastActive: serverTimestamp()}, {merge: true}).catch(() => {});
@@ -319,8 +352,9 @@ export async function changeLockPin() {
   if (rec) { lsSet("lockpin", rec); toast("Lock PIN changed."); }
 }
 // returns "locked", "unlocked", or null if cancelled
-export async function toggleLock(uid) {
-  const id = chatId(me.uid, uid), set = lockedIds();
+export const toggleLock = (uid) => toggleLockById(chatId(me.uid, uid));
+export async function toggleLockById(id) {   // GROUP: groups are locked by their chat id
+  const set = lockedIds();
   if (set.includes(id)) {
     if (!isUnlocked() && !(await askUnlock())) return null;
     lsSet("locked", set.filter((x) => x !== id)); dispatchEvent(new Event("locks-changed")); toast("Chat unlocked."); return "unlocked";
@@ -344,6 +378,7 @@ export const isTyping = (c) => !!c && (typingUntil[c.id] || 0) > Date.now();
 function trackTyping() {                // uses a local timer, so differing phone clocks don't matter
   let changed = false;
   for (const c of chats) {
+    if (c.isGroup) continue;   // GROUP: no typing indicator in groups (yet)
     const v = ms(c.typing && c.typing[peerOf(c)]);
     if (v === 0) { if (typingUntil[c.id]) { typingUntil[c.id] = 0; changed = true; } lastTyp[c.id] = 0; continue; }
     if (v !== lastTyp[c.id]) {
@@ -364,7 +399,8 @@ async function showNotif(c) {
   const locked = isLocked(c.id);
   let body = "New message";
   if (!locked) { try { body = (await decryptText(o, c.lastMessage)) || body; } catch (e) {} }
-  const title = locked ? "emaindi" : nameOf(o), opts = {body, tag: c.id, renotify: true};
+  if (!locked && c.isGroup) body = nameOf(c.lastSender) + ": " + body;   // GROUP: show who wrote it
+  const title = locked ? "emaindi" : c.isGroup ? (c.name || "Group") : nameOf(o), opts = {body, tag: c.id, renotify: true};
   try { const reg = await navigator.serviceWorker.ready; await reg.showNotification(title, opts); }
   catch (e) { try { new Notification(title, opts); } catch (_) {} }
 }
@@ -393,7 +429,7 @@ function markDelivered() {
 }
 
 /* ---------- pop-up sheets + phone back button ---------- */
-export const MODALS = ["#info", "#sheet", "#perm", "#viewer"];
+export const MODALS = ["#info", "#sheet", "#perm", "#viewer", "#qr", "#scan"];
 export function openModal(el) { if (el.hidden) history.pushState({modal: 1}, ""); el.hidden = false; }
 export function closeModal(el) { if (el.hidden) return; el.hidden = true; if (history.state && history.state.modal) history.back(); }
 const backFns = [];
@@ -436,9 +472,9 @@ export function saveCache(now) {
   clearTimeout(saveT);
   const run = () => {
     if (!me || me.cached) return;
-    const ids = new Set([me.uid, ...chats.map(peerOf)]), pp = {};
+    const ids = new Set([me.uid, ...chats.filter((c) => !c.isGroup).map(peerOf), ...chats.filter((c) => c.isGroup && c.lastSender).map((c) => c.lastSender)]), pp = {};
     ids.forEach((u) => { const p = people[u]; if (p) pp[u] = {uid: p.uid, name: p.name, phone: p.phone, email: p.email, photoUrl: p.photoUrl, bio: p.bio, settings: p.settings, publicKey: p.publicKey, oldPublicKeys: p.oldPublicKeys, lastActive: ms(p.lastActive)}; });
-    const cs = chats.filter((c) => c.lastMessage).slice(0, 60).map((c) => ({id: c.id, participants: c.participants, lastMessage: c.lastMessage, lastMessageAt: ms(c.lastMessageAt), lastSender: c.lastSender || "", unread: c.unread || {}, lastRead: packMs(c.lastRead), deliveredAt: packMs(c.deliveredAt), deletedAt: packMs(c.deletedAt)}));
+    const cs = chats.filter((c) => c.lastMessage).slice(0, 60).map((c) => ({id: c.id, participants: c.participants, isGroup: !!c.isGroup, name: c.name || "", admins: c.admins || [], lastMessage: c.lastMessage, lastMessageAt: ms(c.lastMessageAt), lastSender: c.lastSender || "", unread: c.unread || {}, lastRead: packMs(c.lastRead), deliveredAt: packMs(c.deliveredAt), deletedAt: packMs(c.deletedAt)}));
     idbSet("cache:" + me.uid, {chats: cs, people: pp, contacts: {...contacts}}).catch(() => {});
   };
   if (now) run(); else saveT = setTimeout(run, 800);
@@ -504,7 +540,7 @@ export function startSession(onReady) {
       liveChatsReady = true;
       chats = s.docs.map((d) => ({id: d.id, ...d.data({serverTimestamps: "estimate"})}));
       chats.sort((a, b) => ms(b.lastMessageAt) - ms(a.lastMessageAt));
-      chats.forEach((c) => watch(peerOf(c)));
+      chats.forEach((c) => (c.isGroup ? c.lastSender && watch(c.lastSender) : watch(peerOf(c))));
       const tchg = trackTyping();
       notifyNew(); markDelivered();
       hooks.chatsChanged(tchg); hooks.render(); saveCache();
