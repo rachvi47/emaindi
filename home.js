@@ -302,6 +302,10 @@ async function showPerm() {
   };
 }
 
+/* ---------- offline status ---------- */
+function netBanner() { $("#offline").hidden = navigator.onLine; }
+addEventListener("online", netBanner); addEventListener("offline", netBanner); netBanner();
+
 /* ---------- start ---------- */
 history.replaceState({list: 1}, "");
 $("#meBtn").addEventListener("click", showMyQr);        // CHANGED: was showInfo(me.uid), now opens my QR code
