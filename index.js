@@ -14,7 +14,7 @@ const VAPID_PUBLIC_KEY = "BNYZQbMRbD-iwGc3d4ZsZArmE5DFk-KdTJ3QBm1HqxtI23srWMWZK9
 //        Examples: "us-central1", "asia-south1" (Mumbai), "europe-west1". <<<
 const REGION = "us-central1";
 // The private key is kept as a Firebase secret (never in a file): firebase functions:secrets:set VAPID_PRIVATE_KEY
-const VAPID_PRIVATE_KEY = defineSecret("VAPID_PRIVATE_KEY");
+const VAPID_PRIVATE_KEY = defineSecret("R5RNH5exIsDD-k-5AXDk0LMwwaXOFkdirBNPZJd_l4E");
 
 const millis = (t) => (t && t.toMillis ? t.toMillis() : 0);
 
