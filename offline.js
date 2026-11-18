@@ -54,7 +54,8 @@ export async function saveChatMessages(uid, cid, messages) {
     const m = selected[i];
     const rowBytes = new Blob([JSON.stringify(m)]).size;
     if (bounded.length && bytes + rowBytes > MAX_CHAT_CACHE_BYTES) continue;
-    bounded.push({key: uid + "::" + cid + "::" + m.id, chatKey: chatKey(uid, cid), createdAtMs: timestampMs(m.createdAt), ...m});
+    const {createdAt, ...plain} = m;
+    bounded.push({key: uid + "::" + cid + "::" + m.id, chatKey: chatKey(uid, cid), createdAtMs: timestampMs(createdAt), ...plain});
     bytes += rowBytes;
   }
   bounded.reverse();
