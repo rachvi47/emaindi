@@ -97,3 +97,24 @@ export async function offlineStorageEstimate() {
   if (!navigator.storage || !navigator.storage.estimate) return null;
   return navigator.storage.estimate();
 }
+
+export async function offlineCacheStats(uid) {
+  if (!uid || !("indexedDB" in window)) return {count: 0, bytes: 0};
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("messages", "readonly");
+    const req = tx.objectStore("messages").index("chatKey").openCursor();
+    let count = 0, bytes = 0;
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (!cursor) return;
+      if (cursor.value.key.startsWith(uid + "::")) {
+        count++;
+        try { bytes += new Blob([JSON.stringify(cursor.value)]).size; } catch (e) {}
+      }
+      cursor.continue();
+    };
+    tx.oncomplete = () => resolve({count, bytes});
+    tx.onerror = () => reject(tx.error);
+  });
+}
