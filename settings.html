@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Settings - emaindi</title>
 <meta name="theme-color" content="#14213D">
+<!-- NEW: makes emaindi installable on the phone's home screen (needed for notifications on iPhone) -->
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="emaindi">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@800&family=DM+Sans:wght@400;600;700&display=swap" rel="stylesheet">
@@ -81,7 +88,7 @@ main{max-width:34rem;margin:0 auto;padding:1rem 1rem 3rem}
     <button class="row" data-l="theme"><div>Dark theme<small>Easier on the eyes at night</small></div><i class="sw"></i></button>
     <button class="row" data-l="enterSend"><div>Enter key sends<small>Otherwise Enter adds a new line</small></div><i class="sw"></i></button>
     <button class="row" data-l="sound"><div>Message sound<small>Play a sound for new messages</small></div><i class="sw"></i></button>
-    <button class="row" id="notif"><div>Browser notifications<small id="nstat">Tap to allow</small></div></button>
+    <button class="row" id="notif"><div>Notifications<small id="nstat">Checking…</small></div></button>
   </section>
 
   <section class="card"><h2>Help</h2>
@@ -111,6 +118,7 @@ main{max-width:34rem;margin:0 auto;padding:1rem 1rem 3rem}
 import {auth,db,onAuthStateChanged,signOut,updateProfile,doc,getDoc,setDoc,collection,getDocs} from "./fire.js";
 import {deleteUser,EmailAuthProvider,reauthenticateWithCredential,reauthenticateWithPopup,GoogleAuthProvider,RecaptchaVerifier,reauthenticateWithPhoneNumber,PhoneAuthProvider,updatePhoneNumber,linkWithCredential,updatePassword} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import {deleteDoc} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import {enablePush, disablePush, detachPush, pushStatus} from "./push.js";   // NEW: notifications when the app is closed
 
 const $ = (s) => document.querySelector(s);
 let me, ref, photo = "", toastT;
@@ -154,6 +162,7 @@ onAuthStateChanged(auth, async (user) => {
   document.querySelectorAll("[data-s]").forEach((b) => setSw(b, !!st[b.dataset.s]));
   paintAvatar(); counts();
   pwUi();
+  nstat();   // NEW: show whether notifications are on for this phone
 });
 
 document.querySelectorAll("[data-l]").forEach((b) => {
@@ -254,9 +263,25 @@ $("#pwsave").addEventListener("click", async () => {
 });
 
 /* notifications / invite / about */
-function nstat() { $("#nstat").textContent = !("Notification" in window) ? "Not supported on this browser" : Notification.permission === "granted" ? "On" : Notification.permission === "denied" ? "Blocked in browser settings" : "Tap to allow"; }
-nstat();
-$("#notif").addEventListener("click", async () => { if ("Notification" in window) { await Notification.requestPermission(); nstat(); } });
+// CHANGED: this now turns push notifications (they arrive even when the app is closed) on or off for this phone
+async function nstat() {
+  const s = me ? await pushStatus(me.uid) : "off";
+  $("#nstat").textContent = s === "unsupported" ? "Not supported on this browser" : s === "blocked" ? "Blocked in browser settings" : s === "on" ? "On · tap to turn off" : "Off · tap to turn on";
+}
+$("#notif").addEventListener("click", async () => {
+  if (!me) return;
+  const s = await pushStatus(me.uid);
+  try {
+    if (s === "on") { await disablePush(me.uid); toast("Notifications off"); }
+    else if (s === "off") { await enablePush(me.uid); toast("Notifications on"); }
+    else if (s === "blocked") toast("Allow notifications for this site in your browser settings.");
+    else toast("This browser does not support notifications.");
+  } catch (e) {
+    console.error(e);
+    toast(e.message === "not-configured" ? "Push is not set up yet." : e.message === "blocked" ? "Notifications were not allowed." : "Could not change notifications.");
+  }
+  nstat();
+});
 $("#invite").addEventListener("click", async () => {
   const data = {title: "emaindi", text: "Chat with me on emaindi!", url: location.origin};
   try { navigator.share ? await navigator.share(data) : (await navigator.clipboard.writeText(data.url), toast("Link copied")); } catch (e) {}
@@ -267,6 +292,7 @@ $("#about").addEventListener("click", () => toast("emaindi 1.0 · from Tohnna Co
 $("#logout").addEventListener("click", async () => {
   if (!(await ask({title: "Log out?", text: "You can log in again any time.", ok: "Log out"}))) return;
   try { await setDoc(ref, {online: false}, {merge: true}); } catch (e) {}
+  try { await detachPush(me.uid); } catch (e) {}   // NEW: stop notifications for this account on this phone
   await signOut(auth);
   try { localStorage.removeItem("lastUid"); } catch (e) {}
   location.replace("login.html");
@@ -317,7 +343,7 @@ $("#del").addEventListener("click", async () => {
     // 1. confirm it is really you (Firebase requires a recent login to delete an account)
     if (!(await reauth(user))) return;
     // 2. delete your data
-    for (const sub of ["contacts", "private"]) {
+    for (const sub of ["contacts", "devices", "private"]) {   // CHANGED: also removes your saved notification devices
       try { const snap = await getDocs(collection(db, "users", user.uid, sub)); await Promise.all(snap.docs.map((d) => deleteDoc(d.ref))); } catch (e) { console.warn(sub, e.code || e); }
     }
     await deleteDoc(ref);
