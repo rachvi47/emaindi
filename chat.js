@@ -4,6 +4,7 @@ import {$, esc, ms, hm, me, chats, people, hooks, watch, chatId, nameOf, avatar,
   encryptText, decryptText, isLocked, isUnlocked, askUnlock, relock, openModal, closeModal, showInfo, startSession,
   dialog, toast, fitViewport, lsFlag, groupAvatar, pickPeople} from "./common.js";
 import {initCalls, startCall} from "./call.js";
+import {deleteDoc, writeBatch, getDocs as getDocsFs} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {readChatMessages, saveChatMessages} from "./offline.js";
 
 const qs = new URLSearchParams(location.search);
@@ -12,17 +13,30 @@ const peerUid = GROUP ? "" : qs.get("u");
 if (!peerUid && !GROUP) location.replace("home.html");
 const MAX_MEDIA = 720000;      // a Firestore document must stay under 1 MB, so photos / voice are kept below this size
 
-let cid = "", cur = null, msgs = [], raw = [], replyTo = null, msgUnsub = null, snapSeq = 0, listening = false, unlocked = false, needRelock = false;
+let cid = "", cur = null, msgs = [], raw = [], replyTo = null, msgUnsub = null, snapSeq = 0, listening = false, unlocked = false, needRelock = false, leaving = false;
 const goHome = () => location.replace("home.html");
 const fmt = (s) => Math.floor(s / 60) + ":" + String(Math.round(s) % 60).padStart(2, "0");
 const msgPreview = (m) => m.deleted ? "🚫 Deleted message" : m.type === "image" ? "📷 " + (m.text || "Photo") : m.type === "voice" ? "🎤 Voice message" : m.type === "call" ? "📞 " + m.text : m.text;
 const isSelf = () => !GROUP && !!me && peerUid === me.uid;   // NEW: a chat with yourself ("Message yourself")
 
 /* ---------- header ---------- */
+// GROUP permissions
+const gAdmin = () => !!cur && (cur.admins || []).includes(me.uid);
+const canPost = () => !GROUP || !cur || cur.onlyAdminsPost !== true || gAdmin();
+const canEdit = () => gAdmin() || (!!cur && cur.membersCanEdit === true);
+const canAddPeople = () => gAdmin() || (!!cur && cur.membersCanAdd === true);
+function applyComposer() {   // "only admins can send" turns the message box into a notice
+  const ok = canPost(), bar = $("#composer");
+  bar.style.display = ok ? "" : "none";
+  let n = $("#roNote");
+  if (!ok && !n) { n = document.createElement("div"); n.id = "roNote"; n.textContent = "Only admins can send messages in this group."; n.style.cssText = "padding:14px;text-align:center;opacity:.7;font-size:14px"; bar.after(n); }
+  if (n) n.hidden = ok;
+}
 function renderHead() {
   if (GROUP) {
     const names = ((cur && cur.participants) || []).map((u) => (u === me.uid ? "You" : nameOf(u))).join(", ");
-    $("#peer").innerHTML = `${groupAvatar(cid, cur && cur.name, "sm")}<div style="min-width:0"><div class="nm">${esc((cur && cur.name) || "Group")}</div><small style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(names)}</small></div>`;
+    applyComposer();
+    $("#peer").innerHTML = `${groupAvatar(cid, cur && cur.name, "sm", cur && cur.photo)}<div style="min-width:0"><div class="nm">${esc((cur && cur.name) || "Group")}</div><small style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(names)}</small></div>`;
     return;
   }
   const u = people[peerUid] || {}, self = isSelf();
@@ -51,7 +65,7 @@ hooks.chatsChanged = () => {
   if (!cid || !unlocked) return;
   const c = chats.find((x) => x.id === cid);
   if (c) { cur = c; seenInList = true; if (GROUP) (c.participants || []).forEach(watch); }
-  else if (GROUP && seenInList) { toast("You are no longer in this group."); setTimeout(goHome, 1200); return; }   // GROUP: removed by an admin
+  else if (GROUP && seenInList) { if (!leaving) { toast("This group was deleted, or you were removed from it."); setTimeout(goHome, 1200); } return; }   // GROUP: deleted or removed
   if (!listening) { listening = true; begin(!!c || GROUP); }   // a group is never created from here
   renderHead(); renderMsgs(); markRead();
 };
@@ -151,6 +165,7 @@ function renderMsgs(force) {
 /* ---------- sending ---------- */
 async function sendMessage(fields, previewText) {
   if (!cid) return false;
+  if (GROUP && !canPost()) { toast("Only admins can send messages in this group."); return false; }
   let text = "", last, rep = null;
   try {
     text = fields.text ? await encryptText(peerUid, fields.text) : "";
@@ -365,52 +380,136 @@ msgsEl.addEventListener("click", (e) => {
   actions(el.dataset.id);
 });
 
-/* ---------- GROUPS: group info (members, add, remove, rename, leave) ---------- */
+/* ---------- GROUPS: group info, settings, roles, photo, delete ---------- */
 const sysMsg = (text) => addDoc(collection(db, "chats", cid, "messages"), {type: "system", text, senderId: me.uid, createdAt: serverTimestamp(), deleted: false}).catch(console.error);
 const wait = (n) => new Promise((r) => setTimeout(r, n));
+const chatRef = () => doc(db, "chats", cid);
+const fail = (err) => { console.error(err); toast("That didn't work: " + (err.code || err.message)); };
+
+// choose a picture, crop to a square and shrink to 256px (same as profile pictures)
+function pickGroupPhoto() {
+  return new Promise((res) => {
+    const i = document.createElement("input");
+    i.type = "file"; i.accept = "image/*";
+    i.onchange = () => {
+      const f = i.files[0]; if (!f) return res(null);
+      const img = new Image();
+      img.onload = () => {
+        const cv = document.createElement("canvas"); cv.width = cv.height = 256;
+        const s = Math.min(img.width, img.height);
+        cv.getContext("2d").drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, 256, 256);
+        URL.revokeObjectURL(img.src); res(cv.toDataURL("image/jpeg", 0.8));
+      };
+      img.onerror = () => { toast("That file is not a valid image."); res(null); };
+      img.src = URL.createObjectURL(f);
+    };
+    i.click();
+  });
+}
+
+function memberMenu(u) {   // admin taps a member: make / remove admin, remove from group
+  const s = $("#sheet"), isAdm = (cur.admins || []).includes(u);
+  s.innerHTML = `<div class="box"><button data-a="adm">${isAdm ? "Remove as group admin" : "Make group admin"}</button><button data-a="kick" class="danger">Remove from group</button><button data-a="x">Cancel</button></div>`;
+  openModal(s);
+  s.onclick = async (ev) => {
+    const a = ev.target.dataset.a;
+    if (!a && ev.target !== s) return;
+    closeModal(s);
+    if (!a || a === "x") return;
+    await wait(250);
+    const mem = cur.participants || [], adm = cur.admins || [], who = nameOf(me.uid);
+    try {
+      if (a === "adm") {
+        await sysMsg(isAdm ? `${who} removed ${nameOf(u)} as admin` : `${who} made ${nameOf(u)} an admin`);
+        await updateDoc(chatRef(), {admins: isAdm ? adm.filter((x) => x !== u) : [...adm, u]});
+      } else if (a === "kick") {
+        if (!(await dialog({title: "Remove " + nameOf(u) + "?", text: "They will no longer get messages from this group.", ok: "Remove", danger: true}))) return;
+        await sysMsg(`${who} removed ${nameOf(u)}`);
+        await updateDoc(chatRef(), {participants: mem.filter((x) => x !== u), admins: adm.filter((x) => x !== u)});
+      }
+    } catch (err) { fail(err); }
+  };
+}
+
+async function deleteGroup() {
+  if (!navigator.onLine) return toast("You need internet to delete a group.");
+  if (!(await dialog({title: "Delete this group?", text: "The group and all its messages will be deleted for everyone. This cannot be undone.", ok: "Delete", danger: true}))) return;
+  leaving = true; toast("Deleting group…");
+  try {
+    const snap = await getDocsFs(collection(db, "chats", cid, "messages"));
+    let b = writeBatch(db), n = 0;
+    for (const d of snap.docs) { b.delete(d.ref); if (++n % 400 === 0) { await b.commit(); b = writeBatch(db); } }
+    await b.commit();
+    await deleteDoc(chatRef());
+    goHome();
+  } catch (err) { leaving = false; fail(err); }
+}
+
 function showGroupInfo() {
   if (!cur || !cur.isGroup) return;
-  const p = $("#info"), members = cur.participants || [], admins = cur.admins || [], iAdmin = admins.includes(me.uid);
-  const row = (u) => `<div style="display:flex;align-items:center;gap:10px;padding:8px 4px">${avatar(u, "sm")}<div style="flex:1;min-width:0"><div>${esc(u === me.uid ? "You" : nameOf(u))}</div><small>${admins.includes(u) ? "Group admin" : ""}</small></div>${iAdmin && u !== me.uid ? `<button class="btn ghost danger" data-rm="${esc(u)}" style="width:auto;padding:6px 10px;margin:0">Remove</button>` : ""}</div>`;
-  p.innerHTML = `<div class="box">${groupAvatar(cid, cur.name, "big")}<h2>${esc(cur.name || "Group")}</h2><div class="num">${members.length} ${members.length === 1 ? "member" : "members"}</div>
-    <div style="text-align:left;max-height:38vh;overflow:auto;margin:10px 0">${members.map(row).join("")}</div>
-    ${iAdmin ? '<button class="btn" data-a="add">Add members</button><button class="btn ghost" data-a="rename">Rename group</button>' : ""}
-    <button class="btn ghost danger" data-a="leave">Leave group</button><button class="btn ghost" data-a="x">Close</button></div>`;
+  const p = $("#info"), members = cur.participants || [], admins = cur.admins || [], iAdmin = gAdmin(), edit = canEdit();
+  const chk = (k, title, sub) => `<label style="display:flex;align-items:center;gap:12px;padding:9px 0;cursor:pointer"><input type="checkbox" data-s="${k}" ${cur[k] ? "checked" : ""} style="width:18px;height:18px;flex:none"><span>${title}<small style="display:block;opacity:.6">${sub}</small></span></label>`;
+  const row = (u) => `<div ${iAdmin && u !== me.uid ? `data-m="${esc(u)}"` : ""} style="display:flex;align-items:center;gap:10px;padding:8px 4px;${iAdmin && u !== me.uid ? "cursor:pointer" : ""}">${avatar(u, "sm")}<div style="flex:1;min-width:0;pointer-events:none"><div>${esc(u === me.uid ? "You" : nameOf(u))}</div></div>${admins.includes(u) ? '<small style="pointer-events:none;border:1px solid currentColor;border-radius:6px;padding:1px 6px;opacity:.7">Admin</small>' : ""}</div>`;
+  p.innerHTML = `<div class="box">
+    <div style="position:relative;display:inline-block">${groupAvatar(cid, cur.name, "big", cur.photo)}${edit ? '<button data-a="photo" aria-label="Change group photo" style="position:absolute;right:-4px;bottom:-4px;width:36px;height:36px;border-radius:50%;border:2px solid #fff;background:#2563eb;color:#fff;font-size:16px">📷</button>' : ""}</div>
+    <h2>${esc(cur.name || "Group")}</h2>
+    ${cur.description ? `<p style="opacity:.8;margin:2px 0 8px;white-space:pre-wrap">${esc(cur.description)}</p>` : ""}
+    <div class="num">${members.length} ${members.length === 1 ? "member" : "members"}${cur.createdBy ? " · created by " + esc(cur.createdBy === me.uid ? "you" : nameOf(cur.createdBy)) : ""}</div>
+    ${edit ? '<button class="btn ghost" data-a="edit">Edit name &amp; description</button>' : ""}${edit && cur.photo ? '<button class="btn ghost" data-a="rmphoto">Remove group photo</button>' : ""}
+    ${iAdmin ? `<div style="text-align:left;margin:10px 0;border-top:1px solid rgba(128,128,128,.25);padding-top:6px"><b style="font-size:13px;opacity:.7">GROUP SETTINGS</b>${chk("onlyAdminsPost", "Only admins can send messages", "Everyone else can only read")}${chk("membersCanAdd", "Members can add people", "Otherwise only admins can")}${chk("membersCanEdit", "Members can edit group info", "Name, photo and description")}</div>` : ""}
+    <div style="text-align:left;max-height:34vh;overflow:auto;margin:10px 0">${members.map(row).join("")}${iAdmin ? '<small style="display:block;opacity:.55;padding:4px">Tap a member to make them admin or remove them.</small>' : ""}</div>
+    ${canAddPeople() ? '<button class="btn" data-a="add">Add members</button>' : ""}
+    <button class="btn ghost danger" data-a="leave">Leave group</button>${iAdmin ? '<button class="btn ghost danger" data-a="delete">Delete group</button>' : ""}<button class="btn ghost" data-a="x">Close</button></div>`;
   openModal(p);
+  p.onchange = async (e) => {   // settings switches
+    const k = e.target.dataset.s; if (!k) return;
+    try { await updateDoc(chatRef(), {[k]: e.target.checked}); } catch (err) { e.target.checked = !e.target.checked; fail(err); }
+  };
   p.onclick = async (e) => {
-    const t = e.target, a = t.dataset.a, rm = t.dataset.rm;
-    if (!a && !rm) { if (t === p) closeModal(p); return; }
+    const t = e.target.closest("[data-a],[data-m],[data-s]") || e.target, a = t.dataset.a, mu = t.dataset.m;
+    if (!a && !mu) { if (e.target === p) closeModal(p); return; }
     if (a === "x") return closeModal(p);
+    if (a === "photo") {   // the file picker must open straight from the tap
+      const img = await pickGroupPhoto(); if (!img) return;
+      try { await sysMsg(nameOf(me.uid) + " changed the group photo"); await updateDoc(chatRef(), {photo: img}); closeModal(p); toast("Group photo updated."); } catch (err) { fail(err); }
+      return;
+    }
     closeModal(p); await wait(250);
-    const ref = doc(db, "chats", cid), mem = cur.participants || [], adm = cur.admins || [], myName = nameOf(me.uid);
+    const mem = cur.participants || [], adm = cur.admins || [], who = nameOf(me.uid);
     try {
-      if (rm) {
-        if (!(await dialog({title: "Remove " + nameOf(rm) + "?", text: "They will no longer get messages from this group.", ok: "Remove", danger: true}))) return;
-        await sysMsg(myName + " removed " + nameOf(rm));
-        await updateDoc(ref, {participants: mem.filter((x) => x !== rm), admins: adm.filter((x) => x !== rm)});
+      if (mu) return memberMenu(mu);
+      if (a === "rmphoto") { await sysMsg(who + " removed the group photo"); await updateDoc(chatRef(), {photo: ""}); }
+      else if (a === "edit") {
+        const n = await dialog({title: "Group name", input: "text", value: cur.name || "", ok: "Next"});
+        if (n === null) return;
+        if (!n.trim()) return toast("The group needs a name.");
+        const d = await dialog({title: "Group description", input: "text", value: cur.description || "", ok: "Save"});
+        if (d === null) return;
+        const upd = {}, nn = n.trim().slice(0, 60), dd = d.trim().slice(0, 200);
+        if (nn !== (cur.name || "")) upd.name = nn;
+        if (dd !== (cur.description || "")) upd.description = dd;
+        if (!Object.keys(upd).length) return;
+        if (upd.name) await sysMsg(who + " renamed the group to \"" + nn + "\"");
+        await updateDoc(chatRef(), upd);
       } else if (a === "add") {
         const r = await pickPeople({title: "Add members", ok: "Add", exclude: mem});
         if (!r) return;
         if (mem.length + r.ids.length > 100) return toast("A group can have up to 100 people.");
         const upd = {participants: [...mem, ...r.ids]};
         r.ids.forEach((u) => (upd["joinedAt." + u] = serverTimestamp()));
-        await sysMsg(myName + " added " + r.ids.map((u) => nameOf(u)).join(", "));
-        await updateDoc(ref, upd);
-      } else if (a === "rename") {
-        const n = await dialog({title: "Rename group", input: "text", value: cur.name || "", ok: "Save"});
-        if (!n || !n.trim()) return;
-        await sysMsg(myName + " renamed the group to \"" + n.trim().slice(0, 60) + "\"");
-        await updateDoc(ref, {name: n.trim().slice(0, 60)});
+        await sysMsg(who + " added " + r.ids.map((u) => nameOf(u)).join(", "));
+        await updateDoc(chatRef(), upd);
       } else if (a === "leave") {
         if (!(await dialog({title: "Leave this group?", text: "You will stop getting its messages.", ok: "Leave", danger: true}))) return;
         const rest = mem.filter((x) => x !== me.uid), wasAdmin = adm.includes(me.uid);
         const upd = {participants: rest};
         if (wasAdmin) { const na = adm.filter((x) => x !== me.uid); upd.admins = na.length || !rest.length ? na : [rest[0]]; }   // never leave a group without an admin
-        await sysMsg(myName + " left");
-        await updateDoc(ref, upd);
+        leaving = true;
+        await sysMsg(who + " left");
+        await updateDoc(chatRef(), upd);
         goHome();
-      }
-    } catch (err) { console.error(err); toast("That didn't work: " + (err.code || err.message)); }
+      } else if (a === "delete") await deleteGroup();
+    } catch (err) { leaving = false; fail(err); }
   };
 }
 
