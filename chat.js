@@ -4,6 +4,7 @@ import {$, esc, ms, hm, me, chats, people, hooks, watch, chatId, nameOf, avatar,
   encryptText, decryptText, isLocked, isUnlocked, askUnlock, relock, openModal, closeModal, showInfo, startSession,
   dialog, toast, fitViewport, lsFlag} from "./common.js";
 import {initCalls, startCall} from "./call.js";
+import {readChatMessages, saveChatMessages} from "./offline.js";
 
 const peerUid = new URLSearchParams(location.search).get("u");
 if (!peerUid) location.replace("home.html");
@@ -46,10 +47,21 @@ async function begin(known) {
     catch (err) { console.error(err); toast("Could not open chat: " + (err.code || err.message)); return; }
   }
   msgUnsub && msgUnsub();
+  // Paint recent messages from this account's local IndexedDB immediately, before network sync.
+  try {
+    const cached = await readChatMessages(me.uid, cid);
+    if (cached.length && unlocked) {
+      raw = cached
+        .filter((m) => !(m.deletedFor || []).includes(me.uid))
+        .filter((m) => ms(m.createdAt) > ms(cur && cur.deletedAt && cur.deletedAt[me.uid]));
+      await decodeAndShow();
+    }
+  } catch (e) { console.warn("Local message cache unavailable:", e); }
   msgUnsub = onSnapshot(query(collection(db, "chats", cid, "messages"), orderBy("createdAt")), (s) => {
     raw = s.docs.map((d) => ({id: d.id, pending: d.metadata.hasPendingWrites, ...d.data({serverTimestamps: "estimate"})}))
       .filter((m) => !(m.deletedFor || []).includes(me.uid))                                    // "delete for me"
       .filter((m) => ms(m.createdAt) > ms(cur && cur.deletedAt && cur.deletedAt[me.uid]));      // after "delete chat"
+    saveChatMessages(me.uid, cid, raw).catch((e) => console.warn("Could not update local message cache:", e));
     decodeAndShow();
   }, console.error);
 }
