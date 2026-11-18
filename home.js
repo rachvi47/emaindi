@@ -4,6 +4,7 @@ import {$, esc, ms, me, chats, people, hooks, watch, peerOf, chatId, visibleChat
   lockedIds, isLocked, isUnlocked, relock, askUnlock, changeLockPin, toggleLock, deleteChat, openModal, closeModal, onBack,
   showInfo, hydrate, startSession, saveCache, dialog, toast, fitViewport} from "./common.js";
 import {initCalls} from "./call.js";
+import {initPush} from "./push.js";
 
 let found = [], searchTimer = null, lockView = false, needRelock = false;
 
@@ -275,6 +276,7 @@ netBanner();
 /* ---------- permissions: notifications + storage ---------- */
 async function allowAll() {
   try { if ("Notification" in window && Notification.permission === "default") await Notification.requestPermission(); } catch (e) {}
+  try { if (me) await initPush(me.uid); } catch (e) {}   // NEW: register this phone for notifications when the app is closed
   try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) {}
   try { if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) { const st = await navigator.mediaDevices.getUserMedia({audio: true}); st.getTracks().forEach((t) => t.stop()); } } catch (e) {}   // microphone, for voice messages and calls
   // Median.co / GoNative app wrapper: ask Android for push permission (only if the app has it switched on)
@@ -307,6 +309,7 @@ hydrate();
 startSession(() => {
   renderMe(); renderList();
   initCalls();
+  initPush(me.uid).catch(() => {});   // NEW: keep this phone registered for notifications
   if (!localStorage.getItem("perm-seen")) setTimeout(showPerm, 900);
 });
 fitViewport();
