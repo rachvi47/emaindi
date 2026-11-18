@@ -2,7 +2,7 @@
 import {db, doc, getDocs, setDoc, updateDoc, query, collection, where, orderBy, limit, serverTimestamp} from "./fire.js";
 import {$, esc, ms, me, chats, people, hooks, watch, peerOf, chatId, visibleChat, nameOf, avatar, listTime, preview, isTyping,
   lockedIds, isLocked, isUnlocked, relock, askUnlock, changeLockPin, toggleLock, deleteChat, openModal, closeModal, onBack,
-  showInfo, startSession, saveCache, dialog, toast, fitViewport, groupAvatar, pickPeople, toggleLockById, mySet} from "./common.js";
+  showInfo, startSession, saveCache, dialog, toast, fitViewport, groupAvatar, pickPeople, toggleLockById, mySet, isBlocked, toggleBlock, contacts} from "./common.js";
 import {initCalls} from "./call.js";
 // push.js is loaded only when needed, so the app still works even if that file is missing or broken
 const initPush = (uid) => import("./push.js").then((m) => m.initPush(uid)).catch((e) => console.warn("Push:", e));
@@ -46,6 +46,16 @@ function renderList() {
   else if (!q) { const n = chats.filter((c) => visibleChat(c) && lockedSet.has(c.id)).length; if (n) h += lockFolderRow(n); }
   if (lockView && !rows.length) h += '<div class="none">No locked chats yet. Long-press a chat and choose “Lock chat”.</div>';
   const fresh = found;   // CHANGED: your own account is now included in search results too
+  // SUGGESTIONS: people you know (saved contacts, earlier chats incl. deleted ones, group members) that match what you typed
+  let sugg = [];
+  if (q && !lockView) {
+    const have = new Set([me.uid, ...fresh.map((u) => u.uid), ...rows.filter((c) => !c.isGroup).map(peer)]);
+    const pool = new Set(Object.keys(contacts));
+    chats.forEach((c) => (c.participants || []).forEach((u) => pool.add(u)));
+    const hay = (u) => [nameOf(u), (people[u] || {}).phone, (people[u] || {}).email].join(" ").toLowerCase();
+    sugg = [...pool].filter((u) => !have.has(u) && (people[u] || contacts[u]) && hay(u).includes(q))
+      .sort((a, b) => (nameOf(b).toLowerCase().startsWith(q) ? 1 : 0) - (nameOf(a).toLowerCase().startsWith(q) ? 1 : 0) || nameOf(a).localeCompare(nameOf(b))).slice(0, 8);
+  }
   if (q && fresh.length) h += '<div class="sec">On emaindi</div>' + fresh.map((u) => `<button class="row" data-uid="${u.uid}">${avatar(u.uid)}<div class="meta"><div class="nm">${esc(nameOf(u.uid))}</div><div class="pv">${esc(u.phone || u.email)}</div></div></button>`).join("");
   if (rows.length) {
     if (q) h += '<div class="sec">Chats</div>';
@@ -62,9 +72,10 @@ function renderList() {
       const t = ms(c.lastMessageAt), pinned = pins.includes(c.id);
       return `<button class="row" data-chat="1" data-uid="${o}">${avatar(o)}<div class="meta">
         <div class="line1"><span class="nm">${esc(nameOf(o))}${self ? " (You)" : ""}</span><span class="tm ${n ? "new" : ""}">${listTime(t)}</span></div>
-        <div class="line2"><span class="pv">${mine ? '<span class="tk">✓</span>' : ""}${isTyping(c) ? '<span class="typ">typing…</span>' : esc(preview(c))}</span>${(n || pinned) ? `<span style="display:flex;align-items:center;gap:6px">${pinned ? '<span style="font-size:12px">📌</span>' : ""}${n ? `<span class="badge">${n}</span>` : ""}</span>` : ""}</div></div></button>`;
+        <div class="line2"><span class="pv">${mine ? '<span class="tk">✓</span>' : ""}${isTyping(c) ? '<span class="typ">typing…</span>' : isBlocked(o) ? "🚫 Blocked" : esc(preview(c))}</span>${(n || pinned) ? `<span style="display:flex;align-items:center;gap:6px">${pinned ? '<span style="font-size:12px">📌</span>' : ""}${n ? `<span class="badge">${n}</span>` : ""}</span>` : ""}</div></div></button>`;
     }).join("");
   }
+  if (sugg.length) h += '<div class="sec">Suggestions</div>' + sugg.map((u) => `<button class="row" data-uid="${esc(u)}">${avatar(u)}<div class="meta"><div class="nm">${esc(nameOf(u))}</div><div class="pv">${esc((people[u] || {}).phone || (people[u] || {}).email || "")}</div></div></button>`).join("");
   $("#rows").innerHTML = h || `<div class="none">${q ? "No chats found. Enter the full phone number (with country code) or email to find someone." : "No chats yet. Search a phone number or email above to start one."}</div>`;
 }
 hooks.render = renderList;
@@ -148,8 +159,17 @@ rowsEl.addEventListener("contextmenu", (e) => { const r = e.target.closest(".row
 function chatMenu(uid, gid) {
   const s = $("#sheet");
   if (!s.hidden) return;
-  const cid = gid || chatId(me.uid, uid);
-  s.innerHTML = `<div class="box"><button data-a="pin">${isPinned(cid) ? "Unpin chat" : "Pin chat"}</button><button data-a="lock">${isLocked(cid) ? "Unlock chat" : "Lock chat"}</button>${gid ? "" : '<button data-a="del" class="danger">Delete chat</button>'}<button data-a="x">Cancel</button></div>`;
+  const cid = gid || chatId(me.uid, uid), self = !gid && uid === me.uid;
+  const chat = chats.find((c) => c.id === cid);
+  const title = gid ? (chat && chat.name) || "Group" : nameOf(uid) + (self ? " (You)" : "");
+  const blocked = !gid && !self && isBlocked(uid);
+  s.innerHTML = `<div class="box">
+    <div style="padding:12px 16px 8px;text-align:center;font-weight:700;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(title)}</div>
+    <button data-a="pin">${isPinned(cid) ? "📌 Unpin chat" : "📌 Pin chat"}</button>
+    <button data-a="lock">${isLocked(cid) ? "🔓 Unlock chat" : "🔒 Lock chat"}</button>
+    ${gid || self ? "" : `<button data-a="block">${blocked ? "✅ Unblock" : "🚫 Block chat"}</button>`}
+    ${gid ? "" : '<button data-a="del" class="danger">🗑️ Delete chat</button>'}
+    <button data-a="x">Cancel</button></div>`;
   openModal(s);
   s.onclick = (ev) => {
     const a = ev.target.dataset.a;
@@ -157,7 +177,8 @@ function chatMenu(uid, gid) {
     closeModal(s);
     if (a === "pin") { togglePin(cid); renderList(); }
     if (a === "lock") setTimeout(async () => { await toggleLockById(cid); renderList(); }, 250);
-    if (a === "del") setTimeout(() => deleteChat(uid), 250);
+    if (a === "block") setTimeout(() => toggleBlock(uid), 250);
+    if (a === "del") setTimeout(async () => { await deleteChat(uid); renderList(); }, 250);
   };
 }
 
@@ -177,7 +198,7 @@ function homeMenu() {
   const s = $("#sheet");
   if (!s.hidden || !me) return;
   const n = unreadChats().length;
-  s.innerHTML = `<div class="box"><button data-a="read">Read all${n ? " (" + n + ")" : ""}</button><button data-a="set">Settings</button><button data-a="x">Cancel</button></div>`;
+  s.innerHTML = `<div class="box"><button data-a="read">✓✓ Read all${n ? " (" + n + ")" : ""}</button><button data-a="set">⚙️ Settings</button><button data-a="x">Cancel</button></div>`;
   openModal(s);
   s.onclick = (ev) => {
     const a = ev.target.dataset.a;
