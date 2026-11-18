@@ -2,7 +2,7 @@
 import {db, doc, getDoc, setDoc, updateDoc, addDoc, collection, query, orderBy, onSnapshot, serverTimestamp, increment, arrayUnion} from "./fire.js";
 import {$, esc, ms, hm, me, chats, people, hooks, watch, chatId, nameOf, avatar, dayLabel, online, hidden, mySet, isTyping,
   encryptText, decryptText, isLocked, isUnlocked, askUnlock, relock, openModal, closeModal, showInfo, startSession,
-  dialog, toast, fitViewport, lsFlag, groupAvatar, pickPeople} from "./common.js";
+  dialog, toast, fitViewport, lsFlag, groupAvatar, pickPeople, isBlocked, toggleBlock} from "./common.js";
 import {initCalls, startCall} from "./call.js";
 import {deleteDoc, writeBatch, getDocs as getDocsFs} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {readChatMessages, saveChatMessages} from "./offline.js";
@@ -25,12 +25,17 @@ const gAdmin = () => !!cur && (cur.admins || []).includes(me.uid);
 const canPost = () => !GROUP || !cur || cur.onlyAdminsPost !== true || gAdmin();
 const canEdit = () => gAdmin() || (!!cur && cur.membersCanEdit === true);
 const canAddPeople = () => gAdmin() || (!!cur && cur.membersCanAdd === true);
-function applyComposer() {   // "only admins can send" turns the message box into a notice
-  const ok = canPost(), bar = $("#composer");
+function applyComposer() {   // read-only notice instead of the message box (admins-only groups, blocked contacts)
+  const blocked = !GROUP && !isSelf() && isBlocked(peerUid), ok = GROUP ? canPost() : !blocked, bar = $("#composer");
   bar.style.display = ok ? "" : "none";
   let n = $("#roNote");
-  if (!ok && !n) { n = document.createElement("div"); n.id = "roNote"; n.textContent = "Only admins can send messages in this group."; n.style.cssText = "padding:14px;text-align:center;opacity:.7;font-size:14px"; bar.after(n); }
-  if (n) n.hidden = ok;
+  if (!ok && !n) { n = document.createElement("div"); n.id = "roNote"; n.style.cssText = "padding:14px;text-align:center;opacity:.75;font-size:14px"; bar.after(n); }
+  if (n) {
+    n.hidden = ok;
+    n.textContent = blocked ? "You blocked this contact. Tap to unblock." : "Only admins can send messages in this group.";
+    n.style.cursor = blocked ? "pointer" : "";
+    n.onclick = blocked ? () => toggleBlock(peerUid) : null;
+  }
 }
 function renderHead() {
   if (GROUP) {
@@ -39,6 +44,7 @@ function renderHead() {
     $("#peer").innerHTML = `${groupAvatar(cid, cur && cur.name, "sm", cur && cur.photo)}<div style="min-width:0"><div class="nm">${esc((cur && cur.name) || "Group")}</div><small style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(names)}</small></div>`;
     return;
   }
+  applyComposer();
   const u = people[peerUid] || {}, self = isSelf();
   // CHANGED: in a chat with yourself there is no online / typing / last seen status
   const st = self ? "Message yourself" : isTyping(cur) ? '<span class="typing-txt">typing<span class="tdots"><i></i><i></i><i></i></span></span>' : hidden(u) ? "" : online(u) ? "online" : u.lastActive ? "last seen " + dayLabel(ms(u.lastActive)).toLowerCase() + " at " + hm(ms(u.lastActive)) : "";
@@ -166,6 +172,7 @@ function renderMsgs(force) {
 async function sendMessage(fields, previewText) {
   if (!cid) return false;
   if (GROUP && !canPost()) { toast("Only admins can send messages in this group."); return false; }
+  if (!GROUP && !isSelf() && isBlocked(peerUid)) { toast("You blocked this contact. Unblock to send messages."); return false; }
   let text = "", last, rep = null;
   try {
     text = fields.text ? await encryptText(peerUid, fields.text) : "";
