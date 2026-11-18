@@ -88,7 +88,7 @@ async function toggleSpeaker() {
     if (call !== c) return;
     c.speaker = wantsSpeaker;
     paint();
-    toast(wantsSpeaker ? "Speaker output selected." : "Default audio output selected.");
+    toast(wantsSpeaker ? "System speaker output selected when exposed by this device." : "System default audio output selected.");
   } catch (e) {
     console.warn("Audio output selection unavailable:", e);
     toast("This device does not allow changing call audio output here.");
@@ -130,6 +130,7 @@ function makePC() {
   return pc;
 }
 function setActive() {
+  clearTimeout(call.connectTimeout);
   call.state = "active"; call.t0 = Date.now(); ringStop(); paint();
   call.timer = setInterval(() => { const s = $("#cstat"); if (s && call) s.textContent = statText(); }, 1000);
 }
@@ -142,7 +143,7 @@ function flushPending() { const c = call; if (!c) return; c.pending.splice(0).fo
 function cleanup() {
   const c = call; call = null;
   if (!c) return;
-  ringStop(); clearInterval(c.timer); clearTimeout(c.timeout);
+  ringStop(); clearInterval(c.timer); clearTimeout(c.timeout); clearTimeout(c.connectTimeout);
   c.unsubs.forEach((u) => { try { u(); } catch (e) {} });
   try { c.pc && c.pc.close(); } catch (e) {}
   try { c.stream && c.stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
@@ -203,6 +204,8 @@ export async function startCall(peerUid) {
     if (d.answer && !pc.currentRemoteDescription) {
       try { await pc.setRemoteDescription(d.answer); flushPending(); } catch (e) { return fail(e); }
       ringStop(); if (c.state === "calling") { c.state = "connecting"; paint(); }
+      clearTimeout(c.connectTimeout);
+      c.connectTimeout = setTimeout(() => { if (call === c && c.state === "connecting") { toast("Connection timed out. Check your network and try again."); endCall(); } }, 25000);
     }
     if (["ended", "declined", "missed"].includes(d.status)) finish(d.status);
   }));
@@ -231,6 +234,7 @@ async function accept() {
     await pc.setRemoteDescription(c.offer); flushPending();
     const ans = await pc.createAnswer(); await pc.setLocalDescription(ans);
     await updateDoc(c.ref, {answer: {type: ans.type, sdp: ans.sdp}, status: "active", answeredAt: serverTimestamp()});
+    c.connectTimeout = setTimeout(() => { if (call === c && c.state === "connecting") { toast("Connection timed out. Check your network and try again."); endCall(); } }, 25000);
   } catch (e) { fail(e); }
 }
 
