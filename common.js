@@ -244,9 +244,10 @@ function avatar(uid, cls = "") {
 }
 
 /* ---------- GROUPS: group picture + people picker ---------- */
-export function groupAvatar(id, name, cls = "") {
+export function groupAvatar(id, name, cls = "", photo = "") {
   let h = 0; for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) % 360;
-  return `<div class="av ${cls}" style="background:hsl(${h} 45% 42%)">👥</div>`;
+  const inner = photo ? `<img src="${esc(photo)}" alt="" decoding="async">` : "👥";
+  return `<div class="av ${cls}" style="background:hsl(${h} 45% 42%)">${inner}</div>`;
 }
 // Shows a list of people you already chat with (or saved as contacts) with check boxes.
 // Resolves {ids, name} when you press the button, or null when cancelled.
