@@ -44,6 +44,9 @@ exports.notifyNewMessage = onDocumentUpdated(
     const preview = !last || last.startsWith("e2e:") ? "New message" : last.slice(0, 120);
 
     for (const r of recipients) {
+      const pf = await db.doc(`users/${r}/private/prefs`).get();     // muted chats: no notification
+      const until = pf.exists && pf.data().muted ? pf.data().muted[chatId] : undefined;
+      if (until !== undefined && (until === 0 || until > Date.now())) continue;
       if (after.isGroup !== true) {   // 1:1: no notification if this person blocked the sender
         const bl = await db.doc(`users/${r}/private/blocked`).get();
         if (bl.exists && (bl.data().uids || []).includes(sender)) continue;
