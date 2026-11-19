@@ -2,12 +2,12 @@
 import {db, doc, getDocs, setDoc, updateDoc, query, collection, where, orderBy, limit, serverTimestamp} from "./fire.js";
 import {$, esc, ms, me, chats, people, hooks, watch, peerOf, chatId, visibleChat, nameOf, avatar, listTime, preview, isTyping,
   lockedIds, isLocked, isUnlocked, relock, askUnlock, changeLockPin, toggleLock, deleteChat, openModal, closeModal, onBack,
-  showInfo, startSession, saveCache, dialog, toast, fitViewport, groupAvatar, pickPeople, toggleLockById, mySet, isBlocked, toggleBlock, contacts} from "./common.js";
+  showInfo, startSession, saveCache, dialog, toast, fitViewport, groupAvatar, pickPeople, toggleLockById, mySet, isBlocked, toggleBlock, contacts, isMuted, isArchived, archivedIds, setMute, toggleArchive} from "./common.js";
 import {initCalls} from "./call.js";
 // push.js is loaded only when needed, so the app still works even if that file is missing or broken
 const initPush = (uid) => import("./push.js").then((m) => m.initPush(uid)).catch((e) => console.warn("Push:", e));
 
-let found = [], searchTimer = null, lockView = false, needRelock = false;
+let found = [], searchTimer = null, lockView = false, archView = false, needRelock = false;
 
 // NEW: in a chat with yourself there is no "other" person, so fall back to your own uid
 const peer = (c) => peerOf(c) || me.uid;
@@ -34,7 +34,10 @@ function renderList() {
   if (!me) return;
   const q = $("#q").value.trim().toLowerCase();
   const lockedSet = new Set(lockedIds());
-  const rows = chats.filter(visibleChat).filter((c) => (lockView ? lockedSet.has(c.id) : !lockedSet.has(c.id))).filter((c) => {
+  const archSet = new Set(archivedIds());
+  // main list hides archived chats (but searching still finds them); the Archived folder shows only archived ones
+  const inView = (c) => (lockView ? lockedSet.has(c.id) : !lockedSet.has(c.id) && (archView ? archSet.has(c.id) : q || !archSet.has(c.id)));
+  const rows = chats.filter(visibleChat).filter(inView).filter((c) => {
     if (c.isGroup) return !q || (c.name || "").toLowerCase().includes(q);   // GROUP: search by group name
     const o = peer(c), p = people[o] || {};
     return !q || [nameOf(o), p.phone, p.email].join(" ").toLowerCase().includes(q);
@@ -43,8 +46,14 @@ function renderList() {
   rows.sort((a, b) => (pins.includes(b.id) ? 1 : 0) - (pins.includes(a.id) ? 1 : 0));   // NEW: pinned chats stay on top
   let h = "";
   if (lockView) h += lockHeaderRows();
-  else if (!q) { const n = chats.filter((c) => visibleChat(c) && lockedSet.has(c.id)).length; if (n) h += lockFolderRow(n); }
+  else if (archView) h += lockRow("aback", "←", "Archived chats", "Tap to go back");
+  else if (!q) {
+    const n = chats.filter((c) => visibleChat(c) && lockedSet.has(c.id)).length; if (n) h += lockFolderRow(n);
+    const ar = chats.filter((c) => visibleChat(c) && !lockedSet.has(c.id) && archSet.has(c.id));
+    if (ar.length) { const un = ar.reduce((s, c) => s + ((c.unread && c.unread[me.uid]) || 0), 0); h += lockRow("aopen", "🗄️", "Archived", ar.length + (ar.length === 1 ? " chat" : " chats") + (un ? " · " + un + " unread" : "")); }
+  }
   if (lockView && !rows.length) h += '<div class="none">No locked chats yet. Long-press a chat and choose “Lock chat”.</div>';
+  if (archView && !rows.length) h += '<div class="none">No archived chats. Long-press a chat and choose “Archive”.</div>';
   const fresh = found;   // CHANGED: your own account is now included in search results too
   // SUGGESTIONS: people you know (saved contacts, earlier chats incl. deleted ones, group members) that match what you typed
   let sugg = [];
@@ -64,14 +73,14 @@ function renderList() {
         const n = (c.unread && c.unread[me.uid]) || 0, t = ms(c.lastMessageAt), pinned = pins.includes(c.id);
         const who = c.lastSender ? (c.lastSender === me.uid ? "You" : nameOf(c.lastSender)) + ": " : "";
         return `<button class="row" data-chat="1" data-gid="${esc(c.id)}">${groupAvatar(c.id, c.name, "", c.photo)}<div class="meta">
-        <div class="line1"><span class="nm">${esc(c.name || "Group")}</span><span class="tm ${n ? "new" : ""}">${listTime(t)}</span></div>
+        <div class="line1"><span class="nm">${esc(c.name || "Group")}${isMuted(c.id) ? " 🔇" : ""}</span><span class="tm ${n ? "new" : ""}">${listTime(t)}</span></div>
         <div class="line2"><span class="pv">${esc(who + preview(c))}</span>${(n || pinned) ? `<span style="display:flex;align-items:center;gap:6px">${pinned ? '<span style="font-size:12px">📌</span>' : ""}${n ? `<span class="badge">${n}</span>` : ""}</span>` : ""}</div></div></button>`;
       }
       const o = peer(c), self = o === me.uid;
       const n = self ? 0 : (c.unread && c.unread[me.uid]) || 0, mine = !self && c.lastSender === me.uid;   // self chat: no unread badge, no tick
       const t = ms(c.lastMessageAt), pinned = pins.includes(c.id);
       return `<button class="row" data-chat="1" data-uid="${o}">${avatar(o)}<div class="meta">
-        <div class="line1"><span class="nm">${esc(nameOf(o))}${self ? " (You)" : ""}</span><span class="tm ${n ? "new" : ""}">${listTime(t)}</span></div>
+        <div class="line1"><span class="nm">${esc(nameOf(o))}${self ? " (You)" : ""}${isMuted(c.id) ? " 🔇" : ""}</span><span class="tm ${n ? "new" : ""}">${listTime(t)}</span></div>
         <div class="line2"><span class="pv">${mine ? '<span class="tk">✓</span>' : ""}${isTyping(c) ? '<span class="typ">typing…</span>' : isBlocked(o) ? "🚫 Blocked" : esc(preview(c))}</span>${(n || pinned) ? `<span style="display:flex;align-items:center;gap:6px">${pinned ? '<span style="font-size:12px">📌</span>' : ""}${n ? `<span class="badge">${n}</span>` : ""}</span>` : ""}</div></div></button>`;
     }).join("");
   }
@@ -135,9 +144,11 @@ async function lockAction(a) {
     history.pushState({lock: 1}, ""); lockView = true; renderList();
   }
   if (a === "back") leaveLockView();
+  if (a === "aopen") { history.pushState({arch: 1}, ""); archView = true; renderList(); window.scrollTo(0, 0); }
+  if (a === "aback") { if (history.state && history.state.arch) history.back(); else { archView = false; renderList(); } }
   if (a === "pin") await changeLockPin();
 }
-onBack((s) => { if (!s.lock && lockView) { lockView = false; relock(); renderList(); } });
+onBack((s) => { if (!s.lock && lockView) { lockView = false; relock(); renderList(); } if (!s.arch && archView) { archView = false; renderList(); } });
 // ask for the PIN again when you come back while the locked folder was open
 document.addEventListener("visibilitychange", async () => {
   if (document.hidden) { needRelock = lockView; return; }
@@ -156,6 +167,20 @@ rowsEl.addEventListener("pointerdown", (e) => {
 ["pointerup", "pointercancel", "pointerleave"].forEach((t) => rowsEl.addEventListener(t, () => clearTimeout(lpTimer)));
 rowsEl.addEventListener("pointermove", (e) => { if (Math.abs(e.clientX - lpX) > 8 || Math.abs(e.clientY - lpY) > 8) clearTimeout(lpTimer); });
 rowsEl.addEventListener("contextmenu", (e) => { const r = e.target.closest(".row[data-chat]"); if (r) { e.preventDefault(); chatMenu(r.dataset.uid, r.dataset.gid); } });
+function muteMenu(cid) {   // choose how long to mute
+  const s = $("#sheet");
+  s.innerHTML = `<div class="box"><div style="padding:12px 16px 8px;text-align:center;font-weight:700;opacity:.85">Mute notifications</div>
+    <button data-a="8h">🔇 For 8 hours</button><button data-a="1w">🔇 For 1 week</button><button data-a="all">🔇 Always</button><button data-a="x">Cancel</button></div>`;
+  openModal(s);
+  s.onclick = (ev) => {
+    const a = ev.target.dataset.a;
+    if (!a && ev.target !== s) return;
+    closeModal(s);
+    if (a === "8h") setMute(cid, Date.now() + 8 * 3600e3).then((ok) => ok && toast("Muted for 8 hours."));
+    if (a === "1w") setMute(cid, Date.now() + 7 * 24 * 3600e3).then((ok) => ok && toast("Muted for 1 week."));
+    if (a === "all") setMute(cid, 0).then((ok) => ok && toast("Muted."));
+  };
+}
 function chatMenu(uid, gid) {
   const s = $("#sheet");
   if (!s.hidden) return;
@@ -166,6 +191,8 @@ function chatMenu(uid, gid) {
   s.innerHTML = `<div class="box">
     <div style="padding:12px 16px 8px;text-align:center;font-weight:700;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(title)}</div>
     <button data-a="pin">${isPinned(cid) ? "📌 Unpin chat" : "📌 Pin chat"}</button>
+    <button data-a="mute">${isMuted(cid) ? "🔔 Unmute" : "🔇 Mute"}</button>
+    <button data-a="arch">${isArchived(cid) ? "📤 Unarchive" : "🗄️ Archive"}</button>
     <button data-a="lock">${isLocked(cid) ? "🔓 Unlock chat" : "🔒 Lock chat"}</button>
     ${gid || self ? "" : `<button data-a="block">${blocked ? "✅ Unblock" : "🚫 Block chat"}</button>`}
     ${gid ? "" : '<button data-a="del" class="danger">🗑️ Delete chat</button>'}
@@ -176,6 +203,8 @@ function chatMenu(uid, gid) {
     if (!a && ev.target !== s) return;
     closeModal(s);
     if (a === "pin") { togglePin(cid); renderList(); }
+    if (a === "mute") { if (isMuted(cid)) setMute(cid).then((ok) => ok && toast("Unmuted.")); else setTimeout(() => muteMenu(cid), 250); }
+    if (a === "arch") toggleArchive(cid);
     if (a === "lock") setTimeout(async () => { await toggleLockById(cid); renderList(); }, 250);
     if (a === "block") setTimeout(() => toggleBlock(uid), 250);
     if (a === "del") setTimeout(async () => { await deleteChat(uid); renderList(); }, 250);
