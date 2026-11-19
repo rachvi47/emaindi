@@ -30,10 +30,10 @@ export function toast(t) {
 export function dialog({title, text = "", input = "", value = "", ok = "OK", cancel = "Cancel", danger = false}) {
   return new Promise((res) => {
     const d = $("#dlg");
-    d.innerHTML = `<div class="dbox"><h3>${esc(title)}</h3>${text ? `<p>${esc(text)}</p>` : ""}${input ? `<input id="dIn" type="${input}" value="${esc(value)}" autocomplete="off">` : ""}<div class="dact">${cancel ? '<button data-a="c">' + esc(cancel) + "</button>" : ""}<button data-a="o" class="${danger ? "dng" : ""}">${esc(ok)}</button></div></div>`;
+    d.innerHTML = `<div class="dbox"><h3>${esc(title)}</h3>${text ? `<p>${esc(text)}</p>` : ""}${input === "textarea" ? `<textarea id="dIn" rows="4" style="width:100%;padding:.7rem .9rem;border-radius:.7rem;border:1.5px solid var(--line);background:transparent;color:inherit;outline:0;margin-bottom:.8rem;resize:vertical;font:inherit">${esc(value)}</textarea>` : input ? `<input id="dIn" type="${input}" value="${esc(value)}" autocomplete="off">` : ""}<div class="dact">${cancel ? '<button data-a="c">' + esc(cancel) + "</button>" : ""}<button data-a="o" class="${danger ? "dng" : ""}">${esc(ok)}</button></div></div>`;
     d.hidden = false;
     const inp = $("#dIn"), done = (v) => { d.hidden = true; d.onclick = null; res(v); };
-    if (inp) { inp.focus(); inp.addEventListener("keydown", (e) => { if (e.key === "Enter") done(inp.value); }); }
+    if (inp) { inp.focus(); inp.addEventListener("keydown", (e) => { if (e.key === "Enter" && inp.tagName !== "TEXTAREA") done(inp.value); }); }
     d.onclick = (e) => { const a = e.target.dataset.a; if (a === "o") done(inp ? inp.value : true); else if (a === "c" || (e.target === d && cancel)) done(null); };
   });
 }
@@ -457,7 +457,7 @@ function notifyNew() {
     if (peerOf(c) === me.uid) continue;   // NEW: chat with yourself: no sound, no notification
     if (t <= prev || !c.lastSender || c.lastSender === me.uid) continue;
     if (!(c.unread && c.unread[me.uid] > 0)) continue;
-    if (isMuted(c.id)) continue;   // muted chats: no sound, no pop-up
+    if (isMuted(c.id) && !(c.lastMentions || []).includes(me.uid)) continue;   // muted chats: no sound, no pop-up (unless you were @mentioned)
     beep();
     if (!document.hidden && hooks.viewing() === c.id) continue;
     showNotif(c);
