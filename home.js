@@ -412,6 +412,7 @@ $("#scanBtn").addEventListener("click", openScan);
 $("#grpBtn").addEventListener("click", newGroup);
 $("#menuBtn").addEventListener("click", homeMenu);   // Read all / Settings   // GROUP: new group button      // NEW: scanner button
 startSession(() => {
+  try { const nx = localStorage.getItem("joinNext"); if (nx) { localStorage.removeItem("joinNext"); location.replace(nx); return; } } catch (e) {}   // came here from a group invite link
   renderMe(); renderList();
   initCalls();
   initPush(me.uid).catch(() => {});   // NEW: keep this phone registered for notifications
