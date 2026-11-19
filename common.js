@@ -393,6 +393,31 @@ export async function toggleBlock(uid) {
   return true;
 }
 
+/* ---------- mute + archive (saved in users/{me}/private/prefs, so they follow you to every device) ---------- */
+let prefs = {muted: {}, archived: []};          // muted: {chatId: untilMs, 0 = always}
+export const isMuted = (id) => { const u = prefs.muted[id]; return u !== undefined && (u === 0 || u > Date.now()); };
+export const isArchived = (id) => prefs.archived.includes(id);
+export const archivedIds = () => prefs.archived;
+async function savePrefs(next, failMsg) {
+  const old = prefs;
+  prefs = next; hooks.render();                 // show it at once
+  try { await setDoc(doc(db, "users", me.uid, "private", "prefs"), {muted: next.muted, archived: next.archived}); return true; }
+  catch (err) { console.error(err); prefs = old; hooks.render(); toast(failMsg); return false; }
+}
+// until: undefined = unmute, 0 = mute always, or a time in milliseconds
+export async function setMute(id, until) {
+  const muted = {...prefs.muted};
+  if (until === undefined) delete muted[id]; else muted[id] = until;
+  return savePrefs({...prefs, muted}, "Could not change mute.");
+}
+export async function toggleArchive(id) {
+  const on = isArchived(id);
+  const archived = on ? prefs.archived.filter((x) => x !== id) : [...prefs.archived, id];
+  const ok = await savePrefs({...prefs, archived}, "Could not " + (on ? "unarchive" : "archive") + " the chat.");
+  if (ok) toast(on ? "Chat unarchived." : "Chat archived.");
+  return ok;
+}
+
 /* ---------- typing indicator (tracking what the other person is doing) ---------- */
 export const typingUntil = {}, lastTyp = {};
 export const isTyping = (c) => !!c && (typingUntil[c.id] || 0) > Date.now();
@@ -432,6 +457,7 @@ function notifyNew() {
     if (peerOf(c) === me.uid) continue;   // NEW: chat with yourself: no sound, no notification
     if (t <= prev || !c.lastSender || c.lastSender === me.uid) continue;
     if (!(c.unread && c.unread[me.uid] > 0)) continue;
+    if (isMuted(c.id)) continue;   // muted chats: no sound, no pop-up
     beep();
     if (!document.hidden && hooks.viewing() === c.id) continue;
     showNotif(c);
@@ -552,6 +578,11 @@ export function startSession(onReady) {
     document.addEventListener("visibilitychange", () => pres(!document.hidden));
     addEventListener("pagehide", () => pres(false));
 
+    onSnapshot(doc(db, "users", me.uid, "private", "prefs"), (s) => {   // muted + archived chats
+      const d = s.exists() ? s.data() : {};
+      prefs = {muted: d.muted || {}, archived: d.archived || []};
+      hooks.render();
+    }, () => {});
     onSnapshot(doc(db, "users", me.uid, "private", "blocked"), (s) => {   // who I have blocked
       blockedSet = new Set(s.exists() ? s.data().uids || [] : []);
       hooks.render();
