@@ -46,7 +46,8 @@ exports.notifyNewMessage = onDocumentUpdated(
     for (const r of recipients) {
       const pf = await db.doc(`users/${r}/private/prefs`).get();     // muted chats: no notification
       const until = pf.exists && pf.data().muted ? pf.data().muted[chatId] : undefined;
-      if (until !== undefined && (until === 0 || until > Date.now())) continue;
+      const mentioned = after.isGroup === true && (after.lastMentions || []).includes(r);   // @mentioned people are alerted even if muted
+      if (!mentioned && until !== undefined && (until === 0 || until > Date.now())) continue;
       if (after.isGroup !== true) {   // 1:1: no notification if this person blocked the sender
         const bl = await db.doc(`users/${r}/private/blocked`).get();
         if (bl.exists && (bl.data().uids || []).includes(sender)) continue;
@@ -58,7 +59,7 @@ exports.notifyNewMessage = onDocumentUpdated(
         const locked = (dev.locked || []).includes(chatId);           // locked chats show no name or text
         const payload = JSON.stringify({
           title: locked ? "emaindi" : after.isGroup === true ? String(after.name || "Group") : name,
-          body: locked ? "New message" : after.isGroup === true ? name + ": " + preview : preview,
+          body: locked ? "New message" : after.isGroup === true ? name + (mentioned ? " mentioned you: " : ": ") + preview : preview,
           tag: chatId,
           url: after.isGroup === true ? "chat.html?g=" + encodeURIComponent(chatId) : "chat.html?u=" + encodeURIComponent(sender),
         });
