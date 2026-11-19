@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Join group - emaindi</title>
+<meta name="theme-color" content="#14213D">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<script>try{document.documentElement.dataset.theme=localStorage.getItem("theme")||"light"}catch(e){}</script>
+<style>
+:root{--bg:#FFF8E6;--card:#fff;--ink:#14213D;--soft:#4A5470;--line:#E3D5A6;--navy:#14213D;--gold:#FFC93C}
+:root[data-theme=dark]{--bg:#0e1626;--card:#17213a;--ink:#f1f3f9;--soft:#a5adc4;--line:#2a3555}
+*{box-sizing:border-box}[hidden]{display:none!important}
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:1rem;background:var(--bg);color:var(--ink);font-family:'DM Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
+.card{width:min(100%,24rem);background:var(--card);border:1px solid var(--line);border-radius:1.4rem;padding:2rem 1.5rem;text-align:center}
+.ic{width:5rem;height:5rem;border-radius:50%;background:var(--navy);color:var(--gold);display:grid;place-items:center;font-size:2.2rem;margin:0 auto 1rem}
+h1{margin:.2rem 0 .3rem;font-size:1.4rem}
+p{color:var(--soft);margin:.3rem 0 1.2rem;line-height:1.45}
+button{font:inherit;width:100%;padding:.85rem;border:0;border-radius:2rem;background:var(--navy);color:#fff;font-weight:700;cursor:pointer;margin-top:.5rem}
+:root[data-theme=dark] button{background:var(--gold);color:var(--navy)}
+button.ghost{background:none;color:var(--soft);font-weight:600}
+button:disabled{opacity:.5}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="ic">&#128101;</div>
+  <h1 id="title">Group invite</h1>
+  <p id="msg">Checking the invite link…</p>
+  <button id="join" hidden>Join group</button>
+  <button id="home" class="ghost" hidden>Go to my chats</button>
+</div>
+<script type="module">
+import {auth, db, onAuthStateChanged, doc, getDoc, updateDoc, addDoc, collection, serverTimestamp, arrayUnion} from "./fire.js";
+const $ = (s) => document.querySelector(s);
+const code = new URLSearchParams(location.search).get("c") || "";
+const show = (title, msg, join = false) => { $("#title").textContent = title; $("#msg").textContent = msg; $("#join").hidden = !join; $("#home").hidden = join; };
+$("#home").addEventListener("click", () => location.replace("home.html"));
+
+onAuthStateChanged(auth, async (user) => {
+  if (!code) return show("Invalid link", "This invite link is not valid.");
+  if (!user) {
+    // not logged in: log in first, then come straight back to this invite
+    setTimeout(() => {
+      if (auth.currentUser) return;
+      try { localStorage.setItem("joinNext", "join.html?c=" + encodeURIComponent(code)); } catch (e) {}
+      location.replace("login.html");
+    }, 2500);
+    return show("Log in to join", "You need to log in to emaindi first. Taking you there…");
+  }
+  let inv = null;
+  try { const s = await getDoc(doc(db, "invites", code)); inv = s.exists() ? s.data() : null; } catch (e) { console.warn(e); }
+  if (!inv || inv.active !== true) return show("Link not valid", "This invite link has been turned off or does not exist.");
+  const chatId = inv.chatId;
+  // already in the group? just open it
+  try {
+    const c = await getDoc(doc(db, "chats", chatId));
+    if (c.exists() && (c.data().participants || []).includes(user.uid)) return location.replace("chat.html?g=" + encodeURIComponent(chatId));
+  } catch (e) { /* not a member yet: reading is denied, which is expected */ }
+  show(inv.name || "Group", "You were invited to join this group.", true);
+  $("#join").addEventListener("click", async () => {
+    $("#join").disabled = true;
+    try {
+      await updateDoc(doc(db, "chats", chatId), {participants: arrayUnion(user.uid), ["joinedAt." + user.uid]: serverTimestamp(), lastJoinCode: code});
+      const who = user.displayName || user.email || user.phoneNumber || "Someone";
+      await addDoc(collection(db, "chats", chatId, "messages"), {type: "system", text: who + " joined using the invite link", senderId: user.uid, createdAt: serverTimestamp(), deleted: false}).catch(() => {});
+      location.replace("chat.html?g=" + encodeURIComponent(chatId));
+    } catch (err) {
+      console.error(err);
+      $("#join").disabled = false;
+      show(inv.name || "Group", err.code === "permission-denied" ? "Could not join. The link may have been revoked or the group is full." : "Could not join (" + (err.code || err.message) + ").", true);
+    }
+  });
+});
+</script>
+</body>
+</html>
