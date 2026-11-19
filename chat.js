@@ -2,7 +2,7 @@
 import {db, doc, getDoc, setDoc, updateDoc, addDoc, collection, query, orderBy, onSnapshot, serverTimestamp, increment, arrayUnion} from "./fire.js";
 import {$, esc, ms, hm, me, chats, people, hooks, watch, chatId, nameOf, avatar, dayLabel, online, hidden, mySet, isTyping,
   encryptText, decryptText, isLocked, isUnlocked, askUnlock, relock, openModal, closeModal, showInfo, startSession,
-  dialog, toast, fitViewport, lsFlag, groupAvatar, pickPeople, isBlocked, toggleBlock} from "./common.js";
+  dialog, toast, fitViewport, lsFlag, groupAvatar, pickPeople, isBlocked, toggleBlock, visibleChat, peerOf} from "./common.js";
 import {initCalls, startCall} from "./call.js";
 import {deleteDoc, writeBatch, getDocs as getDocsFs} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {readChatMessages, saveChatMessages} from "./offline.js";
@@ -136,9 +136,22 @@ function dataUrlToBlob(u) {
 const mediaUrl = (m, f) => blobUrls[m.id + f] || (blobUrls[m.id + f] = URL.createObjectURL(dataUrlToBlob(m[f])));   // short blob: links keep the page fast
 function bodyHtml(m) {
   if (m.deleted) return '<div class="t">🚫 This message was deleted</div>';
-  if (m.type === "image" && m.img) return `<img class="mimg" src="${mediaUrl(m, "img")}" alt="Photo" loading="lazy" decoding="async">${m.text ? `<div class="t">${esc(m.text)}</div>` : ""}`;
+  if (m.type === "image" && m.img) return `<img class="mimg" src="${mediaUrl(m, "img")}" alt="Photo" loading="lazy" decoding="async">${m.text ? `<div class="t">${withMentions(m)}</div>` : ""}`;
   if (m.type === "voice" && m.audio) return `<div class="vm" data-id="${m.id}"><button class="vp" aria-label="Play">▶</button><div class="vbar"><i></i></div><span class="vd">${fmt(m.dur || 0)}</span></div>`;
-  return `<div class="t">${esc(m.text)}</div>`;
+  return `<div class="t">${withMentions(m)}</div>`;
+}
+const FWD = '<div style="font-size:11px;opacity:.65;font-style:italic;margin-bottom:2px">↪ Forwarded</div>';
+function withMentions(m) {   // @Name inside a message is shown in bold blue
+  let out = esc(m.text);
+  for (const x of m.mentions || []) { const k = esc("@" + x.n); out = out.split(k).join(`<b style="color:#2f8fd6">${k}</b>`); }
+  return out;
+}
+function rxHtml(m) {   // emoji reactions under a message
+  if (m.deleted || !m.reactions) return "";
+  const cnt = {}; for (const e of Object.values(m.reactions)) if (e) cnt[e] = (cnt[e] || 0) + 1;
+  const keys = Object.keys(cnt); if (!keys.length) return "";
+  const mineE = m.reactions[me.uid];
+  return `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">${keys.map((e) => `<span style="background:rgba(128,128,128,.2);border-radius:10px;padding:1px 7px;font-size:13px;${e === mineE ? "outline:1.5px solid #34B7F1;" : ""}">${esc(e)}${cnt[e] > 1 ? " " + cnt[e] : ""}</span>`).join("")}</div>`;
 }
 function senderTag(m, mine) {   // GROUP: the sender's name above each message from someone else
   if (!GROUP || mine || m.deleted) return "";
@@ -160,7 +173,7 @@ function renderMsgs(force) {
     if (m.type === "system") { h += `<div class="day">${esc(m.text)}</div>`; continue; }   // GROUP: "Ravi added Sam" etc.
     if (m.type === "call") { h += `<div class="callmsg ${m.callStatus === "ended" ? "" : "miss"}">📞 ${esc(callLine(m, mine))} · ${hm(t)}</div>`; continue; }
     const q = m.replyTo ? `<div class="quote"><b>${esc(m.replyTo.name)}</b>${esc(m.replyTo.text)}</div>` : "";
-    h += `<div class="msg ${mine ? "me" : ""} ${m.deleted ? "del" : ""}" data-id="${m.id}">${senderTag(m, mine)}${m.deleted ? "" : q}${bodyHtml(m)}<div class="ft">${hm(t)} ${mine ? tick(m) : ""}</div></div>`;
+    h += `<div class="msg ${mine ? "me" : ""} ${m.deleted ? "del" : ""}" data-id="${m.id}">${senderTag(m, mine)}${m.fwd && !m.deleted ? FWD : ""}${m.deleted ? "" : q}${bodyHtml(m)}${rxHtml(m)}<div class="ft">${m.edited && !m.deleted ? "<i>edited</i> " : ""}${hm(t)} ${mine ? tick(m) : ""}</div></div>`;
   }
   if (isTyping(cur) && !isSelf()) h += '<div class="msg typing"><i></i><i></i><i></i></div>';
   box.innerHTML = h;
@@ -184,11 +197,14 @@ async function sendMessage(fields, previewText) {
     return false;
   }
   clearReply(); stopTyping();
+  const ment = GROUP && fields.text ? mentions.filter((x) => fields.text.includes("@" + x.n)) : [];   // @mentions still present in the text
+  mentions = [];
   const fail = (err) => { console.error(err); toast("Message could not be sent."); };
   // not awaited on purpose: offline, these wait in the phone's queue and go out when the internet returns
-  addDoc(collection(db, "chats", cid, "messages"), {senderId: me.uid, createdAt: serverTimestamp(), replyTo: rep, deleted: false, ...fields, text}).catch(fail);
+  addDoc(collection(db, "chats", cid, "messages"), {senderId: me.uid, createdAt: serverTimestamp(), replyTo: rep, deleted: false, ...fields, ...(ment.length ? {mentions: ment} : {}), text}).catch(fail);
   // CHANGED: a message to yourself is never "unread"
   const chatUpdate = {lastMessage: last, lastMessageAt: serverTimestamp(), lastSender: me.uid};
+  if (GROUP) chatUpdate.lastMentions = ment.map((x) => x.u);   // lets muted people still be alerted
   if (GROUP) ((cur && cur.participants) || []).filter((u) => u !== me.uid).forEach((u) => (chatUpdate["unread." + u] = increment(1)));
   else if (!isSelf()) chatUpdate["unread." + peerUid] = increment(1);
   updateDoc(doc(db, "chats", cid), chatUpdate).catch(fail);
@@ -348,13 +364,22 @@ function actions(id) {
   const m = msgs.find((x) => x.id === id);
   if (!m || m.pending) return;
   const mine = m.senderId === me.uid, s = $("#sheet");
-  s.innerHTML = `<div class="box">${m.deleted ? "" : '<button data-a="reply">Reply</button>'}${!m.deleted && (!m.type || m.type === "text" || m.text) ? '<button data-a="copy">Copy</button>' : ""}<button data-a="delme" class="danger">Delete for me</button>${mine && !m.deleted ? '<button data-a="delall" class="danger">Delete for everyone</button>' : ""}<button data-a="x">Cancel</button></div>`;
+  const textual = !m.type || m.type === "text";
+  const canEditMsg = mine && !m.deleted && textual && Date.now() - ms(m.createdAt) < 30 * 60e3;   // edit within 30 minutes
+  const rxRow = m.deleted ? "" : `<div style="display:flex;justify-content:space-around;padding:8px 4px 6px">${["👍", "❤️", "😂", "😮", "😢", "🙏"].map((e) => `<button data-r="${e}" style="width:auto;padding:6px 8px;font-size:24px;border-radius:50%;${(m.reactions || {})[me.uid] === e ? "background:rgba(52,183,241,.28);" : ""}">${e}</button>`).join("")}</div>`;
+  s.innerHTML = `<div class="box">${rxRow}${m.deleted ? "" : '<button data-a="reply">Reply</button>'}${!m.deleted && (!m.type || m.type === "text" || m.text) ? '<button data-a="copy">Copy</button>' : ""}${!m.deleted ? '<button data-a="fwd">Forward</button>' : ""}${canEditMsg ? '<button data-a="edit">Edit</button>' : ""}<button data-a="delme" class="danger">Delete for me</button>${mine && !m.deleted ? '<button data-a="delall" class="danger">Delete for everyone</button>' : ""}<button data-a="x">Cancel</button></div>`;
   openModal(s);
   s.onclick = async (ev) => {
-    const a = ev.target.dataset.a;
-    if (!a && ev.target !== s) return;
+    const a = ev.target.dataset.a, rx = ev.target.dataset.r;
+    if (!a && !rx && ev.target !== s) return;
     closeModal(s);
     const ref = doc(db, "chats", cid, "messages", m.id);
+    if (rx) {   // tap the same emoji again to remove it
+      updateDoc(ref, {["reactions." + me.uid]: (m.reactions || {})[me.uid] === rx ? "" : rx}).catch((err) => { console.error(err); toast("Could not add the reaction."); });
+      return;
+    }
+    if (a === "fwd") { await wait(250); return forwardMessage(m); }
+    if (a === "edit") { await wait(250); return editMessage(m, ref); }
     if (a === "reply") { replyTo = m; $("#replytxt").textContent = msgPreview(m); $("#replybar").hidden = false; $("#txt").focus(); }
     if (a === "copy") navigator.clipboard && navigator.clipboard.writeText(m.text);
     if (a === "delme") {
@@ -386,6 +411,138 @@ msgsEl.addEventListener("click", (e) => {
   const el = e.target.closest(".msg"); if (!el || el.classList.contains("typing")) return;
   actions(el.dataset.id);
 });
+
+/* ---------- edit, forward, search in chat, @mentions ---------- */
+async function editMessage(m, ref) {
+  const t = await dialog({title: "Edit message", input: "textarea", value: m.text || "", ok: "Save"});
+  if (t === null) return;
+  const nt = t.trim();
+  if (!nt || nt === (m.text || "")) return;
+  try {
+    await updateDoc(ref, {text: await encryptText(peerUid, nt), edited: true, editedAt: serverTimestamp()});
+    if (msgs[msgs.length - 1] && msgs[msgs.length - 1].id === m.id) updateDoc(doc(db, "chats", cid), {lastMessage: await encryptText(peerUid, nt.slice(0, 200))}).catch(() => {});
+  } catch (err) { console.error(err); toast("Could not edit the message (edits are allowed for 30 minutes)."); }
+}
+
+// choose which chats to forward to
+function pickChats() {
+  return new Promise((res) => {
+    const list = chats.filter((c) => visibleChat(c) && !isLocked(c.id));
+    const nm = (c) => (c.isGroup ? c.name || "Group" : nameOf(peerOf(c)) + (peerOf(c) === me.uid ? " (You)" : ""));
+    const rows = list.length ? list.map((c) => `<label style="display:flex;align-items:center;gap:10px;padding:8px 2px;cursor:pointer"><input type="checkbox" value="${esc(c.id)}" style="width:18px;height:18px;flex:none">${c.isGroup ? groupAvatar(c.id, c.name, "sm", c.photo) : avatar(peerOf(c), "sm")}<span style="min-width:0">${esc(nm(c))}</span></label>`).join("") : '<p style="opacity:.7">You have no other chats yet.</p>';
+    const d = $("#dlg");
+    d.innerHTML = `<div class="dbox"><h3>Forward to…</h3><div style="max-height:45vh;overflow:auto;text-align:left;margin:8px 0">${rows}</div><div class="dact"><button data-a="c">Cancel</button><button data-a="o">Send</button></div></div>`;
+    d.hidden = false;
+    const done = (v) => { d.hidden = true; d.onclick = null; res(v); };
+    d.onclick = (e) => {
+      const a = e.target.dataset.a;
+      if (a === "o") {
+        const ids = [...d.querySelectorAll('input[type="checkbox"]:checked')].map((x) => x.value);
+        if (!ids.length) return toast("Select at least one chat.");
+        done(list.filter((c) => ids.includes(c.id)));
+      } else if (a === "c" || e.target === d) done(null);
+    };
+  });
+}
+// writes one forwarded message into any chat; returns "" on success or the reason it was skipped
+async function postTo(c, m) {
+  const g = c.isGroup === true, peer = g ? "" : (c.participants || []).find((u) => u !== me.uid) || me.uid, self = !g && peer === me.uid;
+  if (g && c.onlyAdminsPost === true && !(c.admins || []).includes(me.uid)) return "only admins can send in " + (c.name || "that group");
+  if (!g && !self && isBlocked(peer)) return "you blocked " + nameOf(peer);
+  const fields = m.type === "image" ? {type: "image", img: m.img, text: m.text ? await encryptText(peer, m.text) : ""}
+    : m.type === "voice" ? {type: "voice", audio: m.audio, dur: m.dur || 0, text: ""}
+    : {text: await encryptText(peer, m.text || "")};
+  const last = await encryptText(peer, msgPreview(m).slice(0, 200));
+  addDoc(collection(db, "chats", c.id, "messages"), {senderId: me.uid, createdAt: serverTimestamp(), replyTo: null, deleted: false, fwd: true, ...fields}).catch(console.error);
+  const upd = {lastMessage: last, lastMessageAt: serverTimestamp(), lastSender: me.uid};
+  if (g) { upd.lastMentions = []; (c.participants || []).filter((u) => u !== me.uid).forEach((u) => (upd["unread." + u] = increment(1))); }
+  else if (!self) upd["unread." + peer] = increment(1);
+  updateDoc(doc(db, "chats", c.id), upd).catch(console.error);
+  return "";
+}
+async function forwardMessage(m) {
+  const targets = await pickChats();
+  if (!targets || !targets.length) return;
+  let ok = 0; const skipped = [];
+  for (const c of targets) { try { const why = await postTo(c, m); why ? skipped.push(why) : ok++; } catch (err) { console.error(err); skipped.push("an error"); } }
+  toast(ok ? "Forwarded to " + ok + (ok === 1 ? " chat." : " chats.") + (skipped.length ? " Skipped: " + skipped.join(", ") + "." : "") : "Not forwarded: " + skipped.join(", ") + ".");
+}
+
+// search inside this chat (looks through every message loaded in the chat)
+function openFind() {
+  if (document.getElementById("find")) return;
+  const p = document.createElement("div");
+  p.id = "find";
+  p.style.cssText = "position:fixed;inset:0;z-index:12;background:var(--paper);display:flex;flex-direction:column";
+  p.innerHTML = `<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;padding-top:max(10px,env(safe-area-inset-top));background:#14213D"><button id="fx" aria-label="Close search" style="color:#fff;font-size:22px;width:36px;height:36px">&#8592;</button><input id="fq" type="search" placeholder="Search in this chat" autocomplete="off" style="flex:1;border:0;border-radius:20px;padding:9px 14px;outline:0;color:#14213D;background:#fff"></div><div id="fres" style="flex:1;overflow:auto"></div>`;
+  document.body.appendChild(p);
+  const fq = p.querySelector("#fq"), res = p.querySelector("#fres");
+  const close = () => p.remove();
+  const hl = (s, q) => { const i = s.toLowerCase().indexOf(q); if (i < 0) return esc(s.slice(0, 120)); const a = Math.max(0, i - 30); return (a ? "…" : "") + esc(s.slice(a, i)) + '<mark style="background:#FFC93C;color:#14213D;border-radius:3px">' + esc(s.slice(i, i + q.length)) + "</mark>" + esc(s.slice(i + q.length, i + q.length + 80)); };
+  const run = () => {
+    const q = fq.value.trim().toLowerCase();
+    if (!q) { res.innerHTML = '<p style="text-align:center;opacity:.6;padding:24px">Type a word to search this chat.</p>'; return; }
+    const hits = msgs.filter((m) => !m.deleted && m.type !== "call" && m.type !== "system" && (m.text || "").toLowerCase().includes(q)).reverse().slice(0, 100);
+    res.innerHTML = hits.length ? hits.map((m) => `<button data-id="${m.id}" style="display:block;width:100%;text-align:left;padding:12px 16px;border-bottom:1px solid var(--line)"><small style="opacity:.65">${esc(m.senderId === me.uid ? "You" : nameOf(m.senderId))} · ${esc(dayLabel(ms(m.createdAt)))} ${hm(ms(m.createdAt))}</small><div>${hl(m.text, q)}</div></button>`).join("") : '<p style="text-align:center;opacity:.6;padding:24px">No messages found.</p>';
+  };
+  fq.addEventListener("input", run);
+  p.querySelector("#fx").addEventListener("click", close);
+  res.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-id]"); if (!b) return;
+    close();
+    const el = $("#msgs").querySelector('.msg[data-id="' + b.dataset.id + '"]');
+    if (el) { el.scrollIntoView({block: "center"}); const old = el.style.background; el.style.transition = "background .3s"; el.style.background = "rgba(255,201,60,.6)"; setTimeout(() => (el.style.background = old), 1700); }
+  });
+  run(); fq.focus();
+}
+$("#findBtn").addEventListener("click", openFind);
+
+// @mentions: typing @ in a group shows the members to pick from
+let mentions = [];
+function mentionCheck() {
+  const box = $("#mbox");
+  if (!GROUP || !cur) { box.hidden = true; return; }
+  const t = $("#txt"), before = t.value.slice(0, t.selectionStart), m = before.match(/(^|\s)@([^\s@]{0,20})$/);
+  if (!m) { box.hidden = true; return; }
+  const q = m[2].toLowerCase();
+  const cand = (cur.participants || []).filter((u) => u !== me.uid && nameOf(u).toLowerCase().includes(q)).slice(0, 6);
+  if (!cand.length) { box.hidden = true; return; }
+  box.innerHTML = cand.map((u) => `<button data-u="${esc(u)}" style="display:flex;align-items:center;gap:10px;width:100%;padding:8px 14px;text-align:left">${avatar(u, "sm")}<span>${esc(nameOf(u))}</span></button>`).join("");
+  box.hidden = false;
+  box.onclick = (e) => {
+    const b = e.target.closest("[data-u]"); if (!b) return;
+    const u = b.dataset.u, name = nameOf(u), start = before.length - m[2].length - 1;
+    t.value = t.value.slice(0, start) + "@" + name + " " + t.value.slice(t.selectionStart);
+    const pos = start + name.length + 2; t.setSelectionRange(pos, pos);
+    if (!mentions.some((x) => x.u === u)) mentions.push({u, n: name});
+    box.hidden = true; t.focus(); grow(); updateSendMic();
+  };
+}
+$("#txt").addEventListener("input", mentionCheck);
+
+// invite link: anyone with the link can join (admins can switch it off)
+const inviteUrl = (code) => location.origin + "/join.html?c=" + encodeURIComponent(code);
+async function ensureInvite() {
+  if (cur.inviteCode) return cur.inviteCode;
+  const code = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(36).padStart(2, "0")).join("").slice(0, 24);
+  await setDoc(doc(db, "invites", code), {chatId: cid, name: cur.name || "Group", createdBy: me.uid, active: true, createdAt: serverTimestamp()});
+  await updateDoc(chatRef(), {inviteCode: code});
+  return code;
+}
+async function inviteDialog() {
+  const url = inviteUrl(await ensureInvite());
+  const go = await dialog({title: "Group invite link", text: url + "\n\nAnyone with this link can join the group. You can revoke it any time.", ok: "Share link", cancel: "Close"});
+  if (!go) return;
+  const data = {title: cur.name || "Group", text: "Join my group on emaindi: " + (cur.name || ""), url};
+  try { if (navigator.share) await navigator.share(data); else { await navigator.clipboard.writeText(url); toast("Link copied."); } } catch (e) {}
+}
+async function revokeInvite() {
+  if (!cur.inviteCode) return;
+  if (!(await dialog({title: "Revoke invite link?", text: "The old link will stop working. You can make a new one later.", ok: "Revoke", danger: true}))) return;
+  await updateDoc(doc(db, "invites", cur.inviteCode), {active: false});
+  await updateDoc(chatRef(), {inviteCode: ""});
+  toast("Invite link revoked.");
+}
 
 /* ---------- GROUPS: group info, settings, roles, photo, delete ---------- */
 const sysMsg = (text) => addDoc(collection(db, "chats", cid, "messages"), {type: "system", text, senderId: me.uid, createdAt: serverTimestamp(), deleted: false}).catch(console.error);
@@ -466,6 +623,7 @@ function showGroupInfo() {
     ${iAdmin ? `<div style="text-align:left;margin:10px 0;border-top:1px solid rgba(128,128,128,.25);padding-top:6px"><b style="font-size:13px;opacity:.7">GROUP SETTINGS</b>${chk("onlyAdminsPost", "Only admins can send messages", "Everyone else can only read")}${chk("membersCanAdd", "Members can add people", "Otherwise only admins can")}${chk("membersCanEdit", "Members can edit group info", "Name, photo and description")}</div>` : ""}
     <div style="text-align:left;max-height:34vh;overflow:auto;margin:10px 0">${members.map(row).join("")}${iAdmin ? '<small style="display:block;opacity:.55;padding:4px">Tap a member to make them admin or remove them.</small>' : ""}</div>
     ${canAddPeople() ? '<button class="btn" data-a="add">Add members</button>' : ""}
+    ${iAdmin ? '<button class="btn ghost" data-a="invite">🔗 Invite link</button>' : ""}${iAdmin && cur.inviteCode ? '<button class="btn ghost danger" data-a="revoke">Revoke invite link</button>' : ""}
     <button class="btn ghost danger" data-a="leave">Leave group</button>${iAdmin ? '<button class="btn ghost danger" data-a="delete">Delete group</button>' : ""}<button class="btn ghost" data-a="x">Close</button></div>`;
   openModal(p);
   p.onchange = async (e) => {   // settings switches
@@ -506,6 +664,8 @@ function showGroupInfo() {
         r.ids.forEach((u) => (upd["joinedAt." + u] = serverTimestamp()));
         await sysMsg(who + " added " + r.ids.map((u) => nameOf(u)).join(", "));
         await updateDoc(chatRef(), upd);
+      } else if (a === "invite") { await inviteDialog();
+      } else if (a === "revoke") { await revokeInvite();
       } else if (a === "leave") {
         if (!(await dialog({title: "Leave this group?", text: "You will stop getting its messages.", ok: "Leave", danger: true}))) return;
         const rest = mem.filter((x) => x !== me.uid), wasAdmin = adm.includes(me.uid);
