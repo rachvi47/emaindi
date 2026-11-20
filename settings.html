@@ -225,6 +225,14 @@ onAuthStateChanged(auth, async (user) => {
   photo = d.photoUrl || me.photoURL || "";
   const st = d.settings || {};
   document.querySelectorAll("[data-s]").forEach((b) => setSw(b, !!st[b.dataset.s]));
+  // theme / Enter key / sound come back from your account after you log in again
+  document.querySelectorAll("[data-l]").forEach((b) => {
+    const k = b.dataset.l, v = st[k === "theme" ? "darkTheme" : k];
+    if (v === undefined) return;
+    setSw(b, !!v);
+    if (k === "theme") { document.documentElement.dataset.theme = v ? "dark" : "light"; try { localStorage.setItem("theme", v ? "dark" : "light"); } catch (e) {} }
+    else lsSet(k, !!v);
+  });
   paintAvatar(); counts();
   pwUi();
   nstat();   // show whether notifications are on for this phone
@@ -238,6 +246,7 @@ document.querySelectorAll("[data-l]").forEach((b) => {
     setSw(b, on);
     if (k === "theme") { document.documentElement.dataset.theme = on ? "dark" : "light"; try { localStorage.setItem("theme", on ? "dark" : "light"); } catch (e) {} }
     else lsSet(k, on);
+    if (ref) setDoc(ref, {settings: {[k === "theme" ? "darkTheme" : k]: on}}, {merge: true}).catch(() => {});   // saved in your account, so it survives logout
   });
 });
 document.querySelectorAll("[data-s]").forEach((b) => b.addEventListener("click", async () => {
@@ -357,6 +366,7 @@ $("#about").addEventListener("click", () => toast("emaindi 1.0 · from Tohnna Co
 $("#logout").addEventListener("click", async () => {
   if (!(await ask({title: "Log out?", text: "You can log in again any time.", ok: "Log out"}))) return;
   try { await setDoc(ref, {online: false}, {merge: true}); } catch (e) {}
+  try { const did = localStorage.getItem("deviceId"); if (did) await deleteDoc(doc(db, "users", me.uid, "sessions", did)); } catch (e) {}   // this device leaves "Linked devices"
   try { await detachPush(me.uid); } catch (e) {}   // stop notifications for this account on this phone
   await signOut(auth);
   try { localStorage.removeItem("lastUid"); } catch (e) {}
