@@ -1,6 +1,6 @@
 // Service worker: keeps the app files on the phone so the app opens instantly (even offline) and shows notifications.
-const CACHE = "emaindi-v12";   // bumped so every phone drops the old broken home.js and downloads the fixed one
-const SHELL = ["./", "index.html", "splash.js", "offline.js", "login.html", "login.js", "login-extra.css", "home.html", "home.js", "home.css", "chat.html", "chat.js", "chat.css", "common.js", "call.js", "settings.html", "style.css", "fire.js", "manifest.json", "icon-192.png", "icon-512.png", "push.js"];
+const CACHE = "emaindi-v19";   // bumped so every phone drops the old mixed-up copies of the app files
+const SHELL = ["./", "index.html", "splash.js", "offline.js", "login.html", "login.js", "login-extra.css", "home.html", "home.js", "home.css", "chat.html", "chat.js", "chat.css", "common.js", "call.js", "settings.html", "join.html", "style.css", "fire.js", "manifest.json", "icon-192.png", "icon-512.png", "push.js"];
 // FIXED: the first entry was a broken markdown link, so the Firebase SDK was never cached.
 // ADDED: common CDN hosts so the QR code / QR scanner libraries also load offline.
 const CROSS = ["www.gstatic.com", "fonts.googleapis.com", "fonts.gstatic.com", "cdnjs.cloudflare.com", "cdn.jsdelivr.net", "unpkg.com", "firebasestorage.googleapis.com", "storage.googleapis.com", "lh3.googleusercontent.com", "googleusercontent.com"];
@@ -25,17 +25,14 @@ self.addEventListener("fetch", (e) => {
   if (!same && !CROSS.includes(url.hostname)) return;   // Firestore / Auth calls are never touched
 
   if (same) {
-    // CHANGED (WhatsApp-style): open the saved copy instantly, and refresh it in the background.
-    // New app versions appear the next time the app is opened.
+    // NETWORK FIRST: you always get the newest app files, and they always match each other.
+    // (The old "show the saved copy first" way could mix old and new files, which broke the chat until a hard reload.)
+    // The saved copy is only used when you are offline.
     e.respondWith(
-      caches.match(req, {ignoreSearch: true}).then((hit) => {
-        const net = fetch(req).then((res) => {
-          if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
-          return res;
-        }).catch(() => null);
-        if (hit) { e.waitUntil(net); return hit; }
-        return net.then((res) => res || (req.mode === "navigate" ? caches.match("home.html") : Response.error()));   // only pages fall back to home.html; a missing .js must not be answered with HTML
-      })
+      (req.mode === "navigate" ? fetch(req) : fetch(req, {cache: "no-cache"})).then((res) => {
+        if (res.ok) { const copy = res.clone(); e.waitUntil(caches.open(CACHE).then((c) => c.put(req, copy))); }
+        return res;
+      }).catch(() => caches.match(req, {ignoreSearch: true}).then((hit) => hit || (req.mode === "navigate" ? caches.match("home.html") : Response.error())))   // only pages fall back to home.html
     );
   } else {
     // Firebase SDK, QR libraries and fonts are versioned: cache first
