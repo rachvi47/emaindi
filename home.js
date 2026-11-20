@@ -2,8 +2,9 @@
 import {db, doc, getDocs, setDoc, updateDoc, query, collection, where, orderBy, limit, serverTimestamp} from "./fire.js";
 import {$, esc, ms, me, chats, people, hooks, watch, peerOf, chatId, visibleChat, nameOf, avatar, listTime, preview, isTyping,
   lockedIds, isLocked, isUnlocked, relock, askUnlock, changeLockPin, toggleLock, deleteChat, openModal, closeModal, onBack,
-  showInfo, startSession, saveCache, dialog, toast, fitViewport, groupAvatar, pickPeople, toggleLockById, mySet, isBlocked, toggleBlock, contacts, isMuted, isArchived, archivedIds, setMute, toggleArchive, dayLabel, hm} from "./common.js";
+  showInfo, startSession, saveCache, dialog, toast, fitViewport, groupAvatar, pickPeople, toggleLockById, mySet, isBlocked, toggleBlock, contacts, isMuted, isArchived, archivedIds, setMute, toggleArchive, dayLabel, hm, isPinned, togglePin, pinnedIds, myDeviceId} from "./common.js";
 import {initCalls, startCall} from "./call.js";
+import {deleteDoc} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 // push.js is loaded only when needed, so the app still works even if that file is missing or broken
 const initPush = (uid) => import("./push.js").then((m) => m.initPush(uid)).catch((e) => console.warn("Push:", e));
 
@@ -12,15 +13,7 @@ let found = [], searchTimer = null, lockView = false, archView = false, needRelo
 // NEW: in a chat with yourself there is no "other" person, so fall back to your own uid
 const peer = (c) => peerOf(c) || me.uid;
 
-// NEW: pinned chats (saved on this device, separate for each account)
-const pinKey = () => "pins-" + (me ? me.uid : "");
-function pinnedIds() { try { return JSON.parse(localStorage.getItem(pinKey()) || "[]"); } catch (e) { return []; } }
-const isPinned = (id) => pinnedIds().includes(id);
-function togglePin(id) {
-  const a = pinnedIds(), i = a.indexOf(id);
-  if (i >= 0) a.splice(i, 1); else a.unshift(id);
-  try { localStorage.setItem(pinKey(), JSON.stringify(a)); } catch (e) {}
-}
+// pinned chats now live in common.js (saved in your account, so they survive logout and work on every device)
 
 /* ---------- chat list + search ---------- */
 function renderMe() { const b = $("#meBtn"); if (b && me) b.innerHTML = avatar(me.uid); }
@@ -223,19 +216,80 @@ function readAll() {
   todo.forEach((c) => updateDoc(doc(db, "chats", c.id), quiet ? {["unread." + me.uid]: 0} : {["unread." + me.uid]: 0, ["lastRead." + me.uid]: serverTimestamp()}).catch(console.error));
   toast(todo.length === 1 ? "1 chat marked as read." : todo.length + " chats marked as read.");
 }
-function homeMenu() {
-  const s = $("#sheet");
-  if (!s.hidden || !me) return;
-  const n = unreadChats().length;
-  s.innerHTML = `<div class="box"><button data-a="read">✓✓ Read all${n ? " (" + n + ")" : ""}</button><button data-a="set">⚙️ Settings</button><button data-a="x">Cancel</button></div>`;
-  openModal(s);
-  s.onclick = (ev) => {
-    const a = ev.target.dataset.a;
-    if (!a && ev.target !== s) return;
-    closeModal(s);
-    if (a === "read") readAll();
-    if (a === "set") setTimeout(() => (location.href = "settings.html"), 200);
+function homeMenu() {   // the three-dot menu: a panel under the header, top right
+  if (!me) return;
+  const old = document.getElementById("dd");
+  if (old) { old.remove(); return; }
+  const n = unreadChats().length, dark = document.documentElement.dataset.theme === "dark";
+  const top = document.querySelector(".top").getBoundingClientRect().bottom;
+  const d = document.createElement("div");
+  d.id = "dd";
+  d.style.cssText = "position:fixed;inset:0;z-index:15";   // invisible backdrop: tapping outside closes the menu
+  d.innerHTML = `<div style="position:absolute;top:${top + 4}px;right:10px;min-width:15rem;background:${dark ? "#17213a" : "#fff"};color:${dark ? "#f1f3f9" : "#14213D"};border-radius:14px;box-shadow:0 8px 28px rgba(0,0,0,.3);padding:6px">
+    <button data-a="grp">👥 New group</button>
+    <button data-a="dev">💻 Linked devices</button>
+    <button data-a="read">✓✓ Read all${n ? " (" + n + ")" : ""}</button>
+    <button data-a="set">⚙️ Settings</button></div>`;
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  const close = () => { d.remove(); document.removeEventListener("keydown", onKey); };
+  document.addEventListener("keydown", onKey);
+  d.onclick = (e) => {
+    const a = e.target.closest("[data-a]");
+    close();
+    if (!a) return;
+    const act = a.dataset.a;
+    if (act === "grp") setTimeout(newGroup, 120);
+    if (act === "dev") setTimeout(showDevices, 120);
+    if (act === "read") readAll();
+    if (act === "set") setTimeout(() => (location.href = "settings.html"), 120);
   };
+  document.body.appendChild(d);
+}
+
+/* ---------- linked devices: where this account is logged in ---------- */
+async function showDevices() {
+  const p = $("#info"), mine = myDeviceId();
+  p.innerHTML = '<div class="box"><h2>Linked devices</h2><div class="num">Loading…</div><button class="btn ghost" data-a="x">Close</button></div>';
+  openModal(p);
+  const load = async () => {
+    let list = [];
+    try {
+      const snap = await getDocs(collection(db, "users", me.uid, "sessions"));
+      list = snap.docs.map((d) => ({id: d.id, ...d.data({serverTimestamps: "estimate"})}));
+    } catch (err) { console.error(err); const nm = p.querySelector(".num"); if (nm) nm.textContent = "Could not load your devices."; return; }
+    const now = Date.now(), fresh = [];
+    for (const d of list) {
+      if (d.id !== mine && now - ms(d.lastActive) > 45 * 864e5) deleteDoc(doc(db, "users", me.uid, "sessions", d.id)).catch(() => {});   // forgotten devices disappear after 45 days
+      else fresh.push(d);
+    }
+    fresh.sort((a, b) => (a.id === mine ? -1 : b.id === mine ? 1 : ms(b.lastActive) - ms(a.lastActive)));
+    const others = fresh.filter((d) => d.id !== mine);
+    const row = (d) => {
+      const isMine = d.id === mine, t = ms(d.lastActive);
+      const sub = isMine ? '<span style="color:#1a9d4b;font-weight:700">This device</span>' : now - t < 180000 ? "Active now" : "Last active " + esc(dayLabel(t)) + " " + hm(t);
+      return `<div style="display:flex;align-items:center;gap:12px;padding:10px 4px"><span style="font-size:26px">${d.kind === "mobile" ? "📱" : "💻"}</span><div style="flex:1;min-width:0;text-align:left"><div style="font-weight:600">${esc(d.name || "Device")}</div><small style="opacity:.7">${sub}</small></div>${isMine ? "" : `<button class="btn ghost danger" data-out="${esc(d.id)}" style="width:auto;padding:6px 12px;margin:0">Log out</button>`}</div>`;
+    };
+    p.innerHTML = `<div class="box"><h2>Linked devices</h2><div class="num">${fresh.length} ${fresh.length === 1 ? "device is" : "devices are"} logged in with this account</div>
+      <div style="max-height:46vh;overflow:auto;margin:8px 0">${fresh.map(row).join("")}</div>
+      ${others.length ? '<button class="btn ghost danger" data-a="all">Log out all other devices</button>' : ""}
+      <small style="display:block;opacity:.6;margin:6px 0 10px">Logging out a device signs it out of your account right away. A device shows up here after it opens the latest version of the app.</small>
+      <button class="btn ghost" data-a="x">Close</button></div>`;
+  };
+  p.onclick = async (e) => {
+    const t = e.target.closest("[data-out],[data-a]") || e.target, out = t.dataset.out, a = t.dataset.a;
+    if (!out && !a) { if (e.target === p) closeModal(p); return; }
+    if (a === "x") return closeModal(p);
+    try {
+      if (out) { await deleteDoc(doc(db, "users", me.uid, "sessions", out)); toast("Device logged out."); }
+      if (a === "all") {
+        const snap = await getDocs(collection(db, "users", me.uid, "sessions"));
+        await Promise.all(snap.docs.filter((d) => d.id !== mine).map((d) => deleteDoc(d.ref)));
+        toast("All other devices logged out.");
+      }
+    } catch (err) { console.error(err); toast("Could not log out the device."); }
+    load();
+  };
+  load();
 }
 
 /* ---------- GROUPS: create a new group ---------- */
@@ -466,7 +520,6 @@ document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("cli
 history.replaceState({list: 1}, "");
 $("#meBtn").addEventListener("click", showMyQr);        // CHANGED: was showInfo(me.uid), now opens my QR code
 $("#scanBtn").addEventListener("click", openScan);
-$("#grpBtn").addEventListener("click", newGroup);
 $("#menuBtn").addEventListener("click", homeMenu);   // Read all / Settings   // GROUP: new group button      // NEW: scanner button
 startSession(() => {
   try { const nx = localStorage.getItem("joinNext"); if (nx) { localStorage.removeItem("joinNext"); location.replace(nx); return; } } catch (e) {}   // came here from a group invite link
