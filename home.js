@@ -2,8 +2,8 @@
 import {db, doc, getDocs, setDoc, updateDoc, query, collection, where, orderBy, limit, serverTimestamp} from "./fire.js";
 import {$, esc, ms, me, chats, people, hooks, watch, peerOf, chatId, visibleChat, nameOf, avatar, listTime, preview, isTyping,
   lockedIds, isLocked, isUnlocked, relock, askUnlock, changeLockPin, toggleLock, deleteChat, openModal, closeModal, onBack,
-  showInfo, startSession, saveCache, dialog, toast, fitViewport, groupAvatar, pickPeople, toggleLockById, mySet, isBlocked, toggleBlock, contacts, isMuted, isArchived, archivedIds, setMute, toggleArchive} from "./common.js";
-import {initCalls} from "./call.js";
+  showInfo, startSession, saveCache, dialog, toast, fitViewport, groupAvatar, pickPeople, toggleLockById, mySet, isBlocked, toggleBlock, contacts, isMuted, isArchived, archivedIds, setMute, toggleArchive, dayLabel, hm} from "./common.js";
+import {initCalls, startCall} from "./call.js";
 // push.js is loaded only when needed, so the app still works even if that file is missing or broken
 const initPush = (uid) => import("./push.js").then((m) => m.initPush(uid)).catch((e) => console.warn("Push:", e));
 
@@ -87,7 +87,7 @@ function renderList() {
   if (sugg.length) h += '<div class="sec">Suggestions</div>' + sugg.map((u) => `<button class="row" data-uid="${esc(u)}">${avatar(u)}<div class="meta"><div class="nm">${esc(nameOf(u))}</div><div class="pv">${esc((people[u] || {}).phone || (people[u] || {}).email || "")}</div></div></button>`).join("");
   $("#rows").innerHTML = h || `<div class="none">${q ? "No chats found. Enter the full phone number (with country code) or email to find someone." : "No chats yet. Search a phone number or email above to start one."}</div>`;
 }
-hooks.render = renderList;
+hooks.render = () => { renderList(); updateTabBadge(); };
 
 async function openGroup(gid) {   // GROUP
   if (isLocked(gid) && !isUnlocked() && !(await askUnlock())) return;
@@ -367,7 +367,7 @@ function prefetchRecent() {
     getDocs(query(collection(db, "chats", c.id, "messages"), orderBy("createdAt", "desc"), limit(40))).catch(() => {});
   });
 }
-hooks.chatsChanged = prefetchRecent;
+hooks.chatsChanged = () => { prefetchRecent(); if (tab === "calls" && !callCache.at && !callsLoading) loadCalls(true); };
 // NEW: save the chat list on the phone right before the page is closed, reloaded or hidden (common.js already saves on every change)
 const saveNow = () => { try { saveCache(true); } catch (e) {} };
 addEventListener("pagehide", saveNow);
@@ -377,33 +377,90 @@ addEventListener("online", () => { netBanner(); prefetchRecent(); });
 addEventListener("offline", netBanner);
 netBanner();
 
-/* ---------- permissions: notifications + storage ---------- */
-async function allowAll() {
+/* ---------- permissions: the phone's own pop-ups, asked once on the first tap ---------- */
+async function askPermissions() {
   try { if ("Notification" in window && Notification.permission === "default") await Notification.requestPermission(); } catch (e) {}
-  try { if (me) await initPush(me.uid); } catch (e) {}   // NEW: register this phone for notifications when the app is closed
+  try { if (me) await initPush(me.uid); } catch (e) {}   // register this phone for notifications when the app is closed
   try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) {}
   try { if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) { const st = await navigator.mediaDevices.getUserMedia({audio: true}); st.getTracks().forEach((t) => t.stop()); } } catch (e) {}   // microphone, for voice messages and calls
-  // Median.co / GoNative app wrapper: ask Android for push permission (only if the app has it switched on)
-  try { const m = window.median || window.gonative; if (m && m.onesignal && m.onesignal.register) m.onesignal.register(); } catch (e) {}
+  try { const m = window.median || window.gonative; if (m && m.onesignal && m.onesignal.register) m.onesignal.register(); } catch (e) {}   // Median.co / GoNative wrapper
+  try { localStorage.setItem("perm-seen", "1"); } catch (e) {}
 }
-async function showPerm() {
-  const p = $("#perm");
-  const notif = "Notification" in window ? Notification.permission : "unsupported";
-  const persisted = navigator.storage && navigator.storage.persisted ? await navigator.storage.persisted() : null;
-  const row = (icon, title, sub, state) => `<div class="pr"><span class="pi">${icon}</span><div class="tx"><b>${title}</b><small>${sub}</small></div>${
-    state === "granted" ? '<span class="ok">✓ Allowed</span>' : state === "denied" ? '<span class="na">Blocked in settings</span>' : state === "unsupported" ? '<span class="na">Not supported here</span>' : '<span class="na">Not allowed yet</span>'}</div>`;
-  p.innerHTML = `<div class="box"><h2>Allow access</h2><p class="sub">One tap to let emaindi alert you about new messages, keep recent chats saved on this phone, and use the microphone for voice messages and calls.</p>
-    ${row("🔔", "Notifications", "Get alerted when a new message arrives.", notif)}
-    ${row("🎤", "Microphone", "For voice messages and voice calls. Asked when you allow all.", "default")}
-    ${row("💾", "Saved chats", "Keeps recent chats on this device so the app opens fast and works offline.", persisted === null ? "unsupported" : persisted ? "granted" : "default")}
-    <button class="btn" data-a="all" style="width:100%">Allow all</button><button class="btn ghost" data-a="done" style="width:100%">Not now</button></div>`;
-  openModal(p);
-  p.onclick = async (e) => {
-    const a = e.target.dataset.a;
-    if (a === "done" || e.target === p) { closeModal(p); localStorage.setItem("perm-seen", "1"); return; }
-    if (a === "all") { await allowAll(); localStorage.setItem("perm-seen", "1"); showPerm(); }
-  };
+function askOnFirstTap() {   // browsers only show these pop-ups after a tap, so we wait for the first one
+  let seen = false; try { seen = !!localStorage.getItem("perm-seen"); } catch (e) {}
+  if (seen) return;
+  const go = () => { document.removeEventListener("click", go, true); askPermissions(); };
+  document.addEventListener("click", go, true);
 }
+
+/* ---------- bottom bar: Messages / Calls ---------- */
+let tab = "chats", callCache = {at: 0, items: []}, callsLoading = false;
+function updateTabBadge() {
+  const b = $("#tabChatsBadge"); if (!b || !me) return;
+  const n = unreadChats().length;
+  b.textContent = n > 99 ? "99+" : String(n); b.hidden = !n;
+}
+function setTab(t) {
+  tab = t;
+  try { sessionStorage.setItem("homeTab", t); } catch (e) {}
+  $("#rows").hidden = t !== "chats"; $("#calls").hidden = t !== "calls"; document.querySelector(".search").hidden = t !== "chats";
+  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === t));
+  if (t === "calls") loadCalls(); else renderList();
+}
+const fmtDur = (s) => (s >= 3600 ? Math.floor(s / 3600) + "h " + Math.floor((s % 3600) / 60) + "m" : s >= 60 ? Math.floor(s / 60) + "m " + (s % 60) + "s" : s + "s");
+
+// the call history is read from the call messages stored in each chat (newest first)
+async function loadCalls(force) {
+  if (!me) return;
+  if (callCache.items.length) paintCalls(); else $("#calls").innerHTML = '<div class="none">Loading calls…</div>';
+  if (!force && Date.now() - callCache.at < 20000) { if (!callCache.items.length) paintCalls(); return; }
+  if (callsLoading) return;
+  callsLoading = true;
+  try {
+    const locked = new Set(lockedIds());
+    const targets = chats.filter((c) => visibleChat(c) && !c.isGroup && !locked.has(c.id) && peerOf(c) !== me.uid).slice(0, 80);
+    const out = [];
+    await Promise.all(targets.map(async (c) => {
+      try {
+        const s = await getDocs(query(collection(db, "chats", c.id, "messages"), where("type", "==", "call")));
+        const gone = ms(c.deletedAt && c.deletedAt[me.uid]);
+        s.docs.forEach((d) => {
+          const m = d.data({serverTimestamps: "estimate"}), t = ms(m.createdAt);
+          if (t > gone && !(m.deletedFor || []).includes(me.uid)) out.push({peer: peerOf(c), mine: m.senderId === me.uid, status: m.callStatus, dur: m.dur || 0, t});
+        });
+      } catch (e) { console.warn("Call history:", c.id, e.code || e); }
+    }));
+    out.sort((x, y) => y.t - x.t);
+    callCache = {at: targets.length ? Date.now() : 0, items: out.slice(0, 200)};
+  } finally { callsLoading = false; }
+  if (tab === "calls") paintCalls();
+}
+function paintCalls() {
+  const box = $("#calls"), items = callCache.items;
+  if (!items.length) { box.innerHTML = '<div class="none">No calls yet.<br>Open a chat and tap the phone to call.</div>'; return; }
+  let h = "", last = "";
+  for (const it of items) {
+    const day = dayLabel(it.t);
+    if (day !== last) { h += `<div class="sec">${esc(day)}</div>`; last = day; }
+    const answered = it.status === "ended", declined = it.status === "declined", missed = !it.mine && !answered && !declined;
+    const label = answered ? (it.mine ? "Outgoing" : "Incoming") : declined ? "Declined" : it.mine ? "No answer" : "Missed";
+    const color = missed ? "#d93025" : answered ? "#1a9d4b" : "inherit";
+    h += `<div class="row" data-peer="${esc(it.peer)}" role="button" tabindex="0">${avatar(it.peer)}<div class="meta"><div class="line1"><span class="nm" style="${missed ? "color:#d93025" : ""}">${esc(nameOf(it.peer))}</span><span class="tm">${hm(it.t)}</span></div><div class="line2"><span class="pv"><span style="color:${color};font-weight:700">${it.mine ? "↗" : "↙"}</span> ${label}${answered && it.dur ? " · " + fmtDur(it.dur) : ""}</span></div></div><button class="cbtn" data-call="${esc(it.peer)}" aria-label="Call"><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24 11.36 11.36 0 0 0 3.57.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1.02l-2.2 2.2z"/></svg></button></div>`;
+  }
+  box.innerHTML = h;
+}
+$("#calls").addEventListener("click", async (e) => {
+  const cb = e.target.closest("[data-call]");
+  if (cb) {   // the phone button: call this person straight away
+    const uid = cb.dataset.call;
+    if (isBlocked(uid)) return toast("You blocked this contact. Unblock to call.");
+    try { await startCall(uid); } catch (err) { console.error(err); toast("Could not start the call."); }
+    return;
+  }
+  const r = e.target.closest(".row[data-peer]");
+  if (r) openChat(r.dataset.peer).catch((err) => { console.error(err); toast("Could not open chat: " + (err.code || err.message)); });
+});
+document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => setTab(b.dataset.tab)));
 
 /* ---------- start ---------- */
 history.replaceState({list: 1}, "");
@@ -413,9 +470,10 @@ $("#grpBtn").addEventListener("click", newGroup);
 $("#menuBtn").addEventListener("click", homeMenu);   // Read all / Settings   // GROUP: new group button      // NEW: scanner button
 startSession(() => {
   try { const nx = localStorage.getItem("joinNext"); if (nx) { localStorage.removeItem("joinNext"); location.replace(nx); return; } } catch (e) {}   // came here from a group invite link
-  renderMe(); renderList();
+  renderMe(); renderList(); updateTabBadge();
+  try { if (sessionStorage.getItem("homeTab") === "calls") setTab("calls"); } catch (e) {}
   initCalls();
   initPush(me.uid).catch(() => {});   // NEW: keep this phone registered for notifications
-  if (!localStorage.getItem("perm-seen")) setTimeout(showPerm, 900);
+  askOnFirstTap();   // the phone's own permission pop-ups (replaces the old custom screen)
 });
 fitViewport();
