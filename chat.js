@@ -94,7 +94,7 @@ async function begin(known) {
     }
   } catch (e) { console.warn("Local message cache unavailable:", e); }
   msgUnsub = onSnapshot(query(collection(db, "chats", cid, "messages"), orderBy("createdAt")), (s) => {
-    raw = s.docs.map((d) => ({id: d.id, pending: d.metadata.hasPendingWrites, ...d.data({serverTimestamps: "estimate"})}))
+    raw = s.docs.map((d) => ({id: d.id, pending: d.metadata.hasPendingWrites && d.data().createdAt == null, ...d.data({serverTimestamps: "estimate"})}))
       .filter(visibleMsg);
     saveChatMessages(me.uid, cid, raw).catch((e) => console.warn("Could not update local message cache:", e));
     decodeAndShow();
