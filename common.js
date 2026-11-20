@@ -1,5 +1,5 @@
 // common.js - code shared by home.html (chat list) and chat.html (one conversation).
-import {auth,db,onAuthStateChanged,doc,getDoc,setDoc,updateDoc,addDoc,collection,query,where,orderBy,onSnapshot,getDocs,serverTimestamp,increment,arrayUnion,limit} from "./fire.js";
+import {auth,db,signOut,onAuthStateChanged,doc,getDoc,setDoc,updateDoc,addDoc,collection,query,where,orderBy,onSnapshot,getDocs,serverTimestamp,increment,arrayUnion,limit} from "./fire.js";
 
 export const $ = (s) => document.querySelector(s);
 export const esc = (s = "") => String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -289,7 +289,7 @@ export function watch(uid) {
     const prevPk = people[uid] && people[uid].publicKey;
     people[uid] = s.data({serverTimestamps: "estimate"});
     if (prevPk !== people[uid].publicKey) { delete sharedKeys[uid]; pvCache.clear(); hooks.redecrypt(uid); }
-    if (me && uid === me.uid) { hooks.meChanged(); if (!presOn) { presOn = true; pres(true); } }
+    if (me && uid === me.uid) { hooks.meChanged(); syncMySettings(s.metadata.fromCache); if (!presOn) { presOn = true; pres(true); } }
     hooks.peerChanged(uid);
     hooks.render();
     saveCache();   // NEW: keep names and photos saved on the phone too
@@ -394,14 +394,15 @@ export async function toggleBlock(uid) {
 }
 
 /* ---------- mute + archive (saved in users/{me}/private/prefs, so they follow you to every device) ---------- */
-let prefs = {muted: {}, archived: []};          // muted: {chatId: untilMs, 0 = always}
+let pinsMigrated = false;
+let prefs = {muted: {}, archived: [], pinned: []};          // muted: {chatId: untilMs, 0 = always}
 export const isMuted = (id) => { const u = prefs.muted[id]; return u !== undefined && (u === 0 || u > Date.now()); };
 export const isArchived = (id) => prefs.archived.includes(id);
 export const archivedIds = () => prefs.archived;
 async function savePrefs(next, failMsg) {
   const old = prefs;
   prefs = next; hooks.render();                 // show it at once
-  try { await setDoc(doc(db, "users", me.uid, "private", "prefs"), {muted: next.muted, archived: next.archived}); return true; }
+  try { await setDoc(doc(db, "users", me.uid, "private", "prefs"), {muted: next.muted, archived: next.archived, pinned: next.pinned || []}); return true; }
   catch (err) { console.error(err); prefs = old; hooks.render(); toast(failMsg); return false; }
 }
 // until: undefined = unmute, 0 = mute always, or a time in milliseconds
@@ -416,6 +417,58 @@ export async function toggleArchive(id) {
   const ok = await savePrefs({...prefs, archived}, "Could not " + (on ? "unarchive" : "archive") + " the chat.");
   if (ok) toast(on ? "Chat unarchived." : "Chat archived.");
   return ok;
+}
+
+export const pinnedIds = () => prefs.pinned;
+export const isPinned = (id) => prefs.pinned.includes(id);
+export function togglePin(id) {   // newest pin goes to the top
+  const pinned = isPinned(id) ? prefs.pinned.filter((x) => x !== id) : [id, ...prefs.pinned];
+  return savePrefs({...prefs, pinned}, "Could not change the pin.");
+}
+
+/* ---------- your settings follow your account: dark theme, Enter key, sound ---------- */
+const SYNC = [
+  ["darkTheme", () => localStorage.getItem("theme") === "dark", (v) => { localStorage.setItem("theme", v ? "dark" : "light"); applyTheme(); }],
+  ["enterSend", () => lsFlag("enterSend", true), (v) => localStorage.setItem("enterSend", v ? "1" : "0")],
+  ["sound", () => lsFlag("sound", true), (v) => localStorage.setItem("sound", v ? "1" : "0")],
+];
+let settingsSynced = false;
+function syncMySettings(fromCache) {
+  if (fromCache || !me || !people[me.uid]) return;
+  const st = people[me.uid].settings || {}, up = {};
+  try {
+    for (const [k, get, set] of SYNC) { if (st[k] === undefined) up[k] = get(); else if (get() !== !!st[k]) set(!!st[k]); }   // saved value wins; first time, upload this device's value
+  } catch (e) {}
+  if (Object.keys(up).length && !settingsSynced) { settingsSynced = true; setDoc(doc(db, "users", me.uid), {settings: up}, {merge: true}).catch(() => {}); }
+}
+
+/* ---------- linked devices: every device that is logged in registers itself ---------- */
+export const myDeviceId = () => {
+  try {
+    let id = localStorage.getItem("deviceId");
+    if (!id) { id = [...crypto.getRandomValues(new Uint8Array(10))].map((b) => b.toString(36).padStart(2, "0")).join(""); localStorage.setItem("deviceId", id); }
+    return id;
+  } catch (e) { return "device"; }
+};
+function deviceInfo() {
+  const ua = navigator.userAgent;
+  const os = /Android/i.test(ua) ? "Android" : /iPhone|iPad|iPod/i.test(ua) ? "iOS" : /Windows/i.test(ua) ? "Windows" : /Mac OS X|Macintosh/i.test(ua) ? "Mac" : /CrOS/i.test(ua) ? "ChromeOS" : /Linux/i.test(ua) ? "Linux" : "Device";
+  const br = /Edg\//.test(ua) ? "Edge" : /OPR\/|Opera/.test(ua) ? "Opera" : /SamsungBrowser/.test(ua) ? "Samsung Internet" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\/|CriOS/.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "Browser";
+  return {name: br + " on " + os, kind: /Android|iPhone|iPad|iPod|Mobile/i.test(ua) ? "mobile" : "desktop"};
+}
+async function registerDevice() {
+  const ref = doc(db, "users", me.uid, "sessions", myDeviceId()), info = deviceInfo();
+  const touch = () => setDoc(ref, {...info, lastActive: serverTimestamp()}, {merge: true}).catch(() => {});
+  await touch();
+  let last = Date.now();
+  setInterval(() => { if (!document.hidden) { last = Date.now(); touch(); } }, 5 * 60e3);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && Date.now() - last > 120000) { last = Date.now(); touch(); } });
+  // another device removed this one from "Linked devices": sign out here too
+  onSnapshot(ref, (s) => {
+    if (s.metadata.fromCache || s.exists()) return;
+    try { localStorage.removeItem("lastUid"); } catch (e) {}
+    signOut(auth).catch(() => {}).finally(() => location.replace("login.html"));
+  }, () => {});
 }
 
 /* ---------- typing indicator (tracking what the other person is doing) ---------- */
@@ -572,15 +625,20 @@ export function startSession(onReady) {
     addEventListener("online", () => { if (!myKeys) loadKeys(); });
     setDoc(doc(db, "users", me.uid), {uid: me.uid, email: (me.email || "").toLowerCase(), phone: me.phoneNumber || ""}, {merge: true}).catch(() => {});
     watch(me.uid);
+    registerDevice().catch(() => {});
     try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
     setInterval(() => { if (!document.hidden) pres(true); }, 25000);
     setInterval(() => hooks.render(), 20000);
     document.addEventListener("visibilitychange", () => pres(!document.hidden));
     addEventListener("pagehide", () => pres(false));
 
-    onSnapshot(doc(db, "users", me.uid, "private", "prefs"), (s) => {   // muted + archived chats
+    onSnapshot(doc(db, "users", me.uid, "private", "prefs"), (s) => {   // muted, archived and pinned chats (saved in the cloud, so they survive logout)
       const d = s.exists() ? s.data() : {};
-      prefs = {muted: d.muted || {}, archived: d.archived || []};
+      prefs = {muted: d.muted || {}, archived: d.archived || [], pinned: d.pinned || []};
+      if (!s.metadata.fromCache && !d.pinned && !pinsMigrated) {   // one time: move pins saved on this device into the cloud
+        pinsMigrated = true;
+        try { const old = JSON.parse(localStorage.getItem("pins-" + me.uid) || "[]"); if (old.length) savePrefs({...prefs, pinned: old}, "Could not save your pinned chats."); } catch (e) {}
+      }
       hooks.render();
     }, () => {});
     onSnapshot(doc(db, "users", me.uid, "private", "blocked"), (s) => {   // who I have blocked
