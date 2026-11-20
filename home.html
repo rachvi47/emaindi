@@ -11,6 +11,17 @@
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@800&family=DM+Sans:wght@400;600;700&display=swap" rel="stylesheet">
   <script>try{document.documentElement.dataset.theme=localStorage.getItem("theme")||"light"}catch(e){}</script>
   <link rel="stylesheet" href="home.css">
+  <style>
+    #calls{flex:1;overflow-y:auto}
+    #tabs{display:flex;flex:none;background:inherit;border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
+    #tabs button{flex:1;position:relative;display:grid;place-items:center;padding:.75rem 0;color:var(--soft);background:none;border:0;cursor:pointer}
+    #tabs button.on{color:var(--navy)}
+    #tabs button.on::before{content:"";position:absolute;top:0;left:32%;right:32%;height:3px;border-radius:0 0 3px 3px;background:var(--marigold)}
+    #tabs .bdg{position:absolute;top:.4rem;left:calc(50% + .55rem);min-width:1.15rem;height:1.15rem;padding:0 .3rem;border-radius:.6rem;background:#25D366;color:#fff;font-size:.7rem;font-weight:700;display:grid;place-items:center}
+    :root[data-theme=dark] #tabs button.on{color:#fff}
+    #calls .row .cbtn{flex:none;width:2.4rem;height:2.4rem;display:grid;place-items:center;border-radius:50%;color:var(--navy);background:none;border:0;cursor:pointer}
+    :root[data-theme=dark] #calls .row .cbtn{color:var(--marigold)}
+  </style>
 </head>
 <body>
   <div id="app">
@@ -38,6 +49,18 @@
         <input id="q" type="search" placeholder="Search" autocomplete="off">
       </div>
       <div id="rows"></div>
+      <div id="calls" hidden></div>
+
+      <!-- bottom bar: Messages and Calls (symbols only) -->
+      <nav id="tabs">
+        <button class="on" data-tab="chats" aria-label="Messages">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"/></svg>
+          <span class="bdg" id="tabChatsBadge" hidden></span>
+        </button>
+        <button data-tab="calls" aria-label="Calls">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24 11.36 11.36 0 0 0 3.57.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1.02l-2.2 2.2z"/></svg>
+        </button>
+      </nav>
     </aside>
 
     <section id="chat">
@@ -47,7 +70,6 @@
 
   <div id="sheet" hidden></div>
   <div id="info" hidden></div>
-  <div id="perm" hidden></div>
   <div id="dlg" hidden></div>
   <div id="toast" hidden></div>
 
