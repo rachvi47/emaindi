@@ -7,72 +7,79 @@
 <meta name="theme-color" content="#14213D">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@800&family=DM+Sans:wght@400;600;700&display=swap" rel="stylesheet">
 <script>try{document.documentElement.dataset.theme=localStorage.getItem("theme")||"light"}catch(e){}</script>
 <style>
-:root{--bg:#FFF8E6;--card:#fff;--ink:#14213D;--soft:#4A5470;--line:#E3D5A6;--navy:#14213D;--gold:#FFC93C}
+:root{--bg:#FFF8E6;--card:#fff;--ink:#14213D;--soft:#4A5470;--line:#E3D5A6;--navy:#14213D;--gold:#FFC93C;--display:'Bricolage Grotesque','Trebuchet MS',system-ui,sans-serif;--body:'DM Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
 :root[data-theme=dark]{--bg:#0e1626;--card:#17213a;--ink:#f1f3f9;--soft:#a5adc4;--line:#2a3555}
 *{box-sizing:border-box}[hidden]{display:none!important}
-body{margin:0;min-height:100vh;display:grid;place-items:center;padding:1rem;background:var(--bg);color:var(--ink);font-family:'DM Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
-.card{width:min(100%,24rem);background:var(--card);border:1px solid var(--line);border-radius:1.4rem;padding:2rem 1.5rem;text-align:center}
-.ic{width:5rem;height:5rem;border-radius:50%;background:var(--navy);color:var(--gold);display:grid;place-items:center;font-size:2.2rem;margin:0 auto 1rem}
-h1{margin:.2rem 0 .3rem;font-size:1.4rem}
-p{color:var(--soft);margin:.3rem 0 1.2rem;line-height:1.45}
-button{font:inherit;width:100%;padding:.85rem;border:0;border-radius:2rem;background:var(--navy);color:#fff;font-weight:700;cursor:pointer;margin-top:.5rem}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--ink);font-family:var(--body);padding:1rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:1.4rem;padding:2rem 1.5rem;width:min(100%,24rem);text-align:center}
+h1{font-family:var(--display);color:var(--gold);background:var(--navy);margin:-2rem -1.5rem 1.5rem;padding:1rem;border-radius:1.4rem 1.4rem 0 0;font-size:1.5rem}
+.pic{width:5.5rem;height:5.5rem;border-radius:50%;background:var(--navy);display:grid;place-items:center;font-size:2.4rem;margin:0 auto .8rem}
+h2{margin:.2rem 0 .3rem}
+p{color:var(--soft);margin:.3rem 0 1.2rem;line-height:1.4}
+button{font:inherit;display:block;width:100%;padding:.85rem;border:0;border-radius:2rem;font-weight:700;cursor:pointer;background:var(--navy);color:#fff;margin-top:.6rem}
 :root[data-theme=dark] button{background:var(--gold);color:var(--navy)}
 button.ghost{background:none;color:var(--soft);font-weight:600}
 button:disabled{opacity:.5}
 </style>
 </head>
 <body>
-<div class="card">
-  <div class="ic">&#128101;</div>
-  <h1 id="title">Group invite</h1>
-  <p id="msg">Checking the invite link…</p>
-  <button id="join" hidden>Join group</button>
-  <button id="home" class="ghost" hidden>Go to my chats</button>
-</div>
+<main class="card">
+  <h1>emaindi</h1>
+  <div id="view"><p>Checking the invite…</p></div>
+</main>
 <script type="module">
 import {auth, db, onAuthStateChanged, doc, getDoc, updateDoc, addDoc, collection, serverTimestamp, arrayUnion} from "./fire.js";
 const $ = (s) => document.querySelector(s);
 const code = new URLSearchParams(location.search).get("c") || "";
-const show = (title, msg, join = false) => { $("#title").textContent = title; $("#msg").textContent = msg; $("#join").hidden = !join; $("#home").hidden = join; };
-$("#home").addEventListener("click", () => location.replace("home.html"));
+const view = $("#view");
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const say = (msg) => { view.innerHTML = `<p>${esc(msg)}</p><button class="ghost" id="home">Open emaindi</button>`; $("#home").onclick = () => location.replace("home.html"); };
+let started = false;
 
-onAuthStateChanged(auth, async (user) => {
-  if (!code) return show("Invalid link", "This invite link is not valid.");
-  if (!user) {
-    // not logged in: log in first, then come straight back to this invite
+onAuthStateChanged(auth, (user) => {
+  if (started) return;
+  if (!code) { started = true; return say("This invite link is not valid."); }
+  if (!user) {   // give Firebase a moment to restore the login, then ask the person to log in and come back here
     setTimeout(() => {
-      if (auth.currentUser) return;
+      if (auth.currentUser || started) return;
+      started = true;
       try { localStorage.setItem("joinNext", "join.html?c=" + encodeURIComponent(code)); } catch (e) {}
-      location.replace("login.html");
+      view.innerHTML = '<p>Log in to emaindi to join this group.</p><button id="li">Log in</button>';
+      $("#li").onclick = () => location.replace("login.html");
     }, 2500);
-    return show("Log in to join", "You need to log in to emaindi first. Taking you there…");
+    return;
   }
+  started = true;
+  run(user);
+});
+
+async function run(user) {
   let inv = null;
   try { const s = await getDoc(doc(db, "invites", code)); inv = s.exists() ? s.data() : null; } catch (e) { console.warn(e); }
-  if (!inv || inv.active !== true) return show("Link not valid", "This invite link has been turned off or does not exist.");
-  const chatId = inv.chatId;
-  // already in the group? just open it
-  try {
-    const c = await getDoc(doc(db, "chats", chatId));
-    if (c.exists() && (c.data().participants || []).includes(user.uid)) return location.replace("chat.html?g=" + encodeURIComponent(chatId));
-  } catch (e) { /* not a member yet: reading is denied, which is expected */ }
-  show(inv.name || "Group", "You were invited to join this group.", true);
-  $("#join").addEventListener("click", async () => {
-    $("#join").disabled = true;
+  if (!inv || inv.active !== true) return say("This invite link is no longer valid.");
+  try {   // already in the group? reading is only allowed for members
+    const c = await getDoc(doc(db, "chats", inv.chatId));
+    if (c.exists() && (c.data().participants || []).includes(user.uid)) return location.replace("chat.html?g=" + encodeURIComponent(inv.chatId));
+  } catch (e) { /* not a member yet */ }
+  view.innerHTML = `<div class="pic">👥</div><h2>${esc(inv.name || "Group")}</h2><p>You have been invited to join this group.</p><button id="join">Join group</button><button class="ghost" id="no">Not now</button>`;
+  $("#no").onclick = () => location.replace("home.html");
+  $("#join").onclick = async () => {
+    const b = $("#join"); b.disabled = true; b.textContent = "Joining…";
     try {
-      await updateDoc(doc(db, "chats", chatId), {participants: arrayUnion(user.uid), ["joinedAt." + user.uid]: serverTimestamp(), lastJoinCode: code});
+      await updateDoc(doc(db, "chats", inv.chatId), {participants: arrayUnion(user.uid), ["joinedAt." + user.uid]: serverTimestamp(), lastJoinCode: code});
       const who = user.displayName || user.email || user.phoneNumber || "Someone";
-      await addDoc(collection(db, "chats", chatId, "messages"), {type: "system", text: who + " joined using the invite link", senderId: user.uid, createdAt: serverTimestamp(), deleted: false}).catch(() => {});
-      location.replace("chat.html?g=" + encodeURIComponent(chatId));
+      try { await addDoc(collection(db, "chats", inv.chatId, "messages"), {type: "system", text: who + " joined using the invite link", senderId: user.uid, createdAt: serverTimestamp(), deleted: false}); } catch (e) {}
+      location.replace("chat.html?g=" + encodeURIComponent(inv.chatId));
     } catch (err) {
       console.error(err);
-      $("#join").disabled = false;
-      show(inv.name || "Group", err.code === "permission-denied" ? "Could not join. The link may have been revoked or the group is full." : "Could not join (" + (err.code || err.message) + ").", true);
+      b.disabled = false; b.textContent = "Join group";
+      say(err.code === "permission-denied" ? "Could not join. The link may have been revoked, or the group is full." : "Could not join: " + (err.code || err.message));
     }
-  });
-});
+  };
+}
 </script>
 </body>
 </html>
