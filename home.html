@@ -13,6 +13,9 @@
   <link rel="stylesheet" href="home.css">
   <style>
     #calls{flex:1;overflow-y:auto}
+    .chip{flex:none;padding:.4rem .95rem;border-radius:2rem;border:1px solid var(--line);background:none;font-weight:600;font-size:.85rem;color:var(--soft);cursor:pointer}
+    .chip.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+    :root[data-theme=dark] .chip.on{background:var(--marigold);color:#14213D;border-color:var(--marigold)}
     #dd button{display:flex;align-items:center;gap:12px;width:100%;padding:13px 14px;text-align:left;font-weight:600;border-radius:10px;background:none;border:0;cursor:pointer;color:inherit}
     #dd button:hover{background:rgba(128,128,128,.16)}
     #tabs{display:flex;flex:none;background:inherit;border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
@@ -44,6 +47,9 @@
       <div id="offline" hidden>No internet · showing your saved chats</div>
       <div class="search">
         <input id="q" type="search" placeholder="Search" autocomplete="off">
+      </div>
+      <div id="chips" style="display:flex;gap:8px;padding:0 .9rem .6rem;overflow-x:auto;flex:none">
+        <button class="chip on" data-f="all">All</button><button class="chip" data-f="unread">Unread</button><button class="chip" data-f="groups">Groups</button>
       </div>
       <div id="rows"></div>
       <div id="calls" hidden></div>
