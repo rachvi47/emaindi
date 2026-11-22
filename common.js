@@ -217,6 +217,7 @@ async function decryptText(uid, s) {
 }
 const pvCache = new Map();
 function preview(c) {
+  if (me && c.clearedAt && ms(c.clearedAt[me.uid]) > 0 && ms(c.clearedAt[me.uid]) >= ms(c.lastMessageAt)) return "";   // you cleared this chat
   const s = c.lastMessage || "";
   if (!s.startsWith("e2e:")) return s;
   const k = c.id + s;
@@ -594,7 +595,7 @@ export function saveCache(now) {
     if (!me || me.cached) return;
     const ids = new Set([me.uid, ...chats.filter((c) => !c.isGroup).map(peerOf), ...chats.filter((c) => c.isGroup && c.lastSender).map((c) => c.lastSender)]), pp = {};
     ids.forEach((u) => { const p = people[u]; if (p) pp[u] = {uid: p.uid, name: p.name, phone: p.phone, email: p.email, photoUrl: p.photoUrl, bio: p.bio, settings: p.settings, publicKey: p.publicKey, oldPublicKeys: p.oldPublicKeys, lastActive: ms(p.lastActive)}; });
-    const cs = chats.filter((c) => c.lastMessage).slice(0, 60).map((c) => ({id: c.id, participants: c.participants, isGroup: !!c.isGroup, name: c.name || "", admins: c.admins || [], lastMessage: c.lastMessage, lastMessageAt: ms(c.lastMessageAt), lastSender: c.lastSender || "", unread: c.unread || {}, lastRead: packMs(c.lastRead), deliveredAt: packMs(c.deliveredAt), deletedAt: packMs(c.deletedAt)}));
+    const cs = chats.filter((c) => c.lastMessage).slice(0, 60).map((c) => ({id: c.id, participants: c.participants, isGroup: !!c.isGroup, name: c.name || "", admins: c.admins || [], lastMessage: c.lastMessage, lastMessageAt: ms(c.lastMessageAt), lastSender: c.lastSender || "", unread: c.unread || {}, lastRead: packMs(c.lastRead), deliveredAt: packMs(c.deliveredAt), deletedAt: packMs(c.deletedAt), clearedAt: packMs(c.clearedAt)}));
     idbSet("cache:" + me.uid, {chats: cs, people: pp, contacts: {...contacts}}).catch(() => {});
   };
   if (now) run(); else saveT = setTimeout(run, 800);
@@ -608,7 +609,7 @@ async function hydrateAccountCache(uid) {
   try {
     const d = await idbGet("cache:" + uid);
     if (!d || !me || me.uid !== uid || liveChatsReady) return false;
-    chats = (d.chats || []).map((c) => ({...c, lastMessageAt: T(c.lastMessageAt), lastRead: unpackMs(c.lastRead), deliveredAt: unpackMs(c.deliveredAt), deletedAt: unpackMs(c.deletedAt)}));
+    chats = (d.chats || []).map((c) => ({...c, lastMessageAt: T(c.lastMessageAt), lastRead: unpackMs(c.lastRead), deliveredAt: unpackMs(c.deliveredAt), deletedAt: unpackMs(c.deletedAt), clearedAt: unpackMs(c.clearedAt)}));
     for (const u in d.people || {}) people[u] = {...d.people[u], lastActive: T(d.people[u].lastActive)};
     Object.assign(contacts, d.contacts || {});
     hooks.meChanged(); hooks.render();
