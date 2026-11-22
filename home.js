@@ -8,7 +8,7 @@ import {deleteDoc} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-fir
 // push.js is loaded only when needed, so the app still works even if that file is missing or broken
 const initPush = (uid) => import("./push.js").then((m) => m.initPush(uid)).catch((e) => console.warn("Push:", e));
 
-let found = [], searchTimer = null, lockView = false, archView = false, needRelock = false;
+let found = [], searchTimer = null, lockView = false, archView = false, needRelock = false, filter = "all";
 
 // NEW: in a chat with yourself there is no "other" person, so fall back to your own uid
 const peer = (c) => peerOf(c) || me.uid;
@@ -30,7 +30,8 @@ function renderList() {
   const archSet = new Set(archivedIds());
   // main list hides archived chats (but searching still finds them); the Archived folder shows only archived ones
   const inView = (c) => (lockView ? lockedSet.has(c.id) : !lockedSet.has(c.id) && (archView ? archSet.has(c.id) : q || !archSet.has(c.id)));
-  const rows = chats.filter(visibleChat).filter(inView).filter((c) => {
+  const passChip = (c) => (filter === "unread" ? ((c.unread && c.unread[me.uid]) || 0) > 0 : filter === "groups" ? !!c.isGroup : true);
+  const rows = chats.filter(visibleChat).filter(inView).filter(passChip).filter((c) => {
     if (c.isGroup) return !q || (c.name || "").toLowerCase().includes(q);   // GROUP: search by group name
     const o = peer(c), p = people[o] || {};
     return !q || [nameOf(o), p.phone, p.email].join(" ").toLowerCase().includes(q);
@@ -453,11 +454,12 @@ function updateTabBadge() {
   const b = $("#tabChatsBadge"); if (!b || !me) return;
   const n = unreadChats().length;
   b.textContent = n > 99 ? "99+" : String(n); b.hidden = !n;
+  const uc = document.querySelector('#chips [data-f="unread"]'); if (uc) uc.textContent = n ? "Unread " + n : "Unread";
 }
 function setTab(t) {
   tab = t;
   try { sessionStorage.setItem("homeTab", t); } catch (e) {}
-  $("#rows").hidden = t !== "chats"; $("#calls").hidden = t !== "calls"; document.querySelector(".search").hidden = t !== "chats";
+  $("#rows").hidden = t !== "chats"; $("#calls").hidden = t !== "calls"; document.querySelector(".search").hidden = t !== "chats"; $("#chips").hidden = t !== "chats";
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === t));
   if (t === "calls") loadCalls(); else renderList();
 }
@@ -515,6 +517,7 @@ $("#calls").addEventListener("click", async (e) => {
   if (r) openChat(r.dataset.peer).catch((err) => { console.error(err); toast("Could not open chat: " + (err.code || err.message)); });
 });
 document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => setTab(b.dataset.tab)));
+document.querySelectorAll("#chips .chip").forEach((b) => b.addEventListener("click", () => { filter = b.dataset.f; document.querySelectorAll("#chips .chip").forEach((x) => x.classList.toggle("on", x === b)); renderList(); }));
 
 /* ---------- start ---------- */
 history.replaceState({list: 1}, "");
