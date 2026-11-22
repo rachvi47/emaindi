@@ -395,14 +395,14 @@ export async function toggleBlock(uid) {
 
 /* ---------- mute + archive (saved in users/{me}/private/prefs, so they follow you to every device) ---------- */
 let pinsMigrated = false;
-let prefs = {muted: {}, archived: [], pinned: []};          // muted: {chatId: untilMs, 0 = always}
+let prefs = {muted: {}, archived: [], pinned: [], starred: [], wall: {}};          // muted: {chatId: untilMs, 0 = always}
 export const isMuted = (id) => { const u = prefs.muted[id]; return u !== undefined && (u === 0 || u > Date.now()); };
 export const isArchived = (id) => prefs.archived.includes(id);
 export const archivedIds = () => prefs.archived;
 async function savePrefs(next, failMsg) {
   const old = prefs;
   prefs = next; hooks.render();                 // show it at once
-  try { await setDoc(doc(db, "users", me.uid, "private", "prefs"), {muted: next.muted, archived: next.archived, pinned: next.pinned || []}); return true; }
+  try { await setDoc(doc(db, "users", me.uid, "private", "prefs"), {muted: next.muted, archived: next.archived, pinned: next.pinned || [], starred: next.starred || [], wall: next.wall || {}}); return true; }
   catch (err) { console.error(err); prefs = old; hooks.render(); toast(failMsg); return false; }
 }
 // until: undefined = unmute, 0 = mute always, or a time in milliseconds
@@ -419,6 +419,26 @@ export async function toggleArchive(id) {
   return ok;
 }
 
+// starred messages ("chatId|messageId") and chat wallpapers, saved in your account
+export const isStarred = (cid, mid) => prefs.starred.includes(cid + "|" + mid);
+export async function toggleStar(cid, mid) {
+  const k = cid + "|" + mid, on = prefs.starred.includes(k);
+  if (!on && prefs.starred.length >= 300) { toast("You can star up to 300 messages."); return false; }
+  return savePrefs({...prefs, starred: on ? prefs.starred.filter((x) => x !== k) : [...prefs.starred, k]}, "Could not change the star.");
+}
+export const WALLS = {
+  default: {label: "Default", light: "", dark: ""},
+  sand: {label: "Sand", light: "#F4EBD0", dark: "#2a2618"},
+  mint: {label: "Mint", light: "#DDF3E4", dark: "#14291f"},
+  sky: {label: "Sky", light: "#DCEBFA", dark: "#12243a"},
+  rose: {label: "Rose", light: "#F8E1E7", dark: "#2e1a21"},
+  lilac: {label: "Lilac", light: "#E8E1F7", dark: "#221b36"},
+  sunset: {label: "Sunset", light: "linear-gradient(160deg,#ffd6a5,#ffadad)", dark: "linear-gradient(160deg,#4a2a1a,#3a1a24)"},
+  ocean: {label: "Ocean", light: "linear-gradient(160deg,#a0e7e5,#b4f8c8)", dark: "linear-gradient(160deg,#10373a,#12332a)"},
+  night: {label: "Night", light: "#1b2437", dark: "#05080f"},
+};
+export const wallOf = (id) => prefs.wall[id] || prefs.wall["*"] || "default";
+export function setWall(id, key) { return savePrefs({...prefs, wall: {...prefs.wall, [id]: key}}, "Could not change the wallpaper."); }
 export const pinnedIds = () => prefs.pinned;
 export const isPinned = (id) => prefs.pinned.includes(id);
 export function togglePin(id) {   // newest pin goes to the top
@@ -634,7 +654,7 @@ export function startSession(onReady) {
 
     onSnapshot(doc(db, "users", me.uid, "private", "prefs"), (s) => {   // muted, archived and pinned chats (saved in the cloud, so they survive logout)
       const d = s.exists() ? s.data() : {};
-      prefs = {muted: d.muted || {}, archived: d.archived || [], pinned: d.pinned || []};
+      prefs = {muted: d.muted || {}, archived: d.archived || [], pinned: d.pinned || [], starred: d.starred || [], wall: d.wall || {}};
       if (!s.metadata.fromCache && !d.pinned && !pinsMigrated) {   // one time: move pins saved on this device into the cloud
         pinsMigrated = true;
         try { const old = JSON.parse(localStorage.getItem("pins-" + me.uid) || "[]"); if (old.length) savePrefs({...prefs, pinned: old}, "Could not save your pinned chats."); } catch (e) {}
