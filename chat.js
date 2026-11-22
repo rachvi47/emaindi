@@ -2,7 +2,7 @@
 import {db, doc, getDoc, setDoc, updateDoc, addDoc, collection, query, orderBy, onSnapshot, serverTimestamp, increment, arrayUnion} from "./fire.js";
 import {$, esc, ms, hm, me, chats, people, hooks, watch, chatId, nameOf, avatar, dayLabel, online, hidden, mySet, isTyping,
   encryptText, decryptText, isLocked, isUnlocked, askUnlock, relock, openModal, closeModal, showInfo, startSession,
-  dialog, toast, fitViewport, lsFlag, groupAvatar, pickPeople, isBlocked, toggleBlock, visibleChat, peerOf, isStarred, toggleStar, wallOf, setWall, WALLS, isMuted, setMute, onBack} from "./common.js";
+  dialog, toast, fitViewport, lsFlag, groupAvatar, pickPeople, isBlocked, toggleBlock, visibleChat, peerOf, isStarred, toggleStar, wallOf, setWall, WALLS, isMuted, setMute, onBack, contacts} from "./common.js";
 import {initCalls, startCall} from "./call.js";
 import {deleteDoc, writeBatch, getDocs as getDocsFs} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 // Cloud Storage (videos, files, full-size photos) needs the Firebase Blaze plan. Until you upgrade, leave this false:
@@ -93,6 +93,7 @@ hooks.chatsChanged = () => {
 const visibleMsg = (m) => !(m.deletedFor || []).includes(me.uid)
   && ms(m.createdAt) > ms(cur && cur.deletedAt && cur.deletedAt[me.uid])
   && ms(m.createdAt) >= ms(cur && cur.joinedAt && cur.joinedAt[me.uid])
+  && ms(m.createdAt) > ms(cur && cur.clearedAt && cur.clearedAt[me.uid])
   && !isExpired(m);
 async function begin(known) {
   if (!known) {     // a brand-new chat: create it (merge, so nothing existing is overwritten)
@@ -676,7 +677,6 @@ function openFind() {
   });
   run(); fq.focus();
 }
-$("#findBtn").addEventListener("click", openFind);
 
 // @mentions: typing @ in a group shows the members to pick from
 let mentions = [];
@@ -802,6 +802,7 @@ function showGroupInfo() {
     <div class="num">${members.length} ${members.length === 1 ? "member" : "members"}${cur.createdBy ? " · created by " + esc(cur.createdBy === me.uid ? "you" : nameOf(cur.createdBy)) : ""}</div>
     <div style="display:flex;gap:8px;margin:8px 0;width:100%"><button class="btn ghost" data-a="gsearch" style="margin:0;flex:1">🔍 Search</button><button class="btn ghost" data-a="gstars" style="margin:0;flex:1">⭐ Starred</button></div>
     <div style="display:flex;gap:8px;margin:0 0 8px;width:100%"><button class="btn ghost" data-a="gttl" style="margin:0;flex:1">⏳ ${esc(ttlLabel())}</button><button class="btn ghost" data-a="gwall" style="margin:0;flex:1">🎨 Wallpaper</button></div>
+    <div style="display:flex;gap:8px;margin:0 0 8px;width:100%"><button class="btn ghost" data-a="gexport" style="margin:0;flex:1">📤 Export</button><button class="btn ghost" data-a="gclear" style="margin:0;flex:1">🧹 Clear</button><button class="btn ghost" data-a="greport" style="margin:0;flex:1">🚩 Report</button></div>
     ${edit ? '<button class="btn ghost" data-a="edit">Edit name &amp; description</button>' : ""}${edit && cur.photo ? '<button class="btn ghost" data-a="rmphoto">Remove group photo</button>' : ""}
     ${iAdmin ? `<div style="text-align:left;margin:10px 0;border-top:1px solid rgba(128,128,128,.25);padding-top:6px"><b style="font-size:13px;opacity:.7">GROUP SETTINGS</b>${chk("onlyAdminsPost", "Only admins can send messages", "Everyone else can only read")}${chk("membersCanAdd", "Members can add people", "Otherwise only admins can")}${chk("membersCanEdit", "Members can edit group info", "Name, photo and description")}</div>` : ""}
     <div style="text-align:left;max-height:34vh;overflow:auto;margin:10px 0">${members.map(row).join("")}${iAdmin ? '<small style="display:block;opacity:.55;padding:4px">Tap a member to make them admin or remove them.</small>' : ""}</div>
@@ -847,6 +848,9 @@ function showGroupInfo() {
         r.ids.forEach((u) => (upd["joinedAt." + u] = serverTimestamp()));
         await sysMsg(who + " added " + r.ids.map((u) => nameOf(u)).join(", "));
         await updateDoc(chatRef(), upd);
+      } else if (a === "gexport") { exportChat();
+      } else if (a === "gclear") { await clearChat();
+      } else if (a === "greport") { await reportChat();
       } else if (a === "gsearch") { openFind();
       } else if (a === "gstars") { showStarred();
       } else if (a === "gttl") { ttlMenu();
@@ -1030,19 +1034,39 @@ function wallpaperMenu() {
   };
 }
 
-/* attach menu: photo, poll, location, contact */
+/* attach menu: a bottom panel on phones, a pop-up above the + button on computers (like WhatsApp) */
+const ATTACH = [["photo", "🖼️", "Photo", "#7e57c2"], ["poll", "📊", "Poll", "#f9a825"], ["loc", "📍", "Location", "#2e9e5b"], ["ct", "👤", "Contact", "#1e88e5"]];
+const isDesktop = () => window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+document.head.insertAdjacentHTML("beforeend", "<style>#apop button:hover{background:rgba(128,128,128,.16)}</style>");
+function runAttach(a) {
+  if (a === "photo") $("#file").click();                     // must run straight from the tap
+  if (a === "poll") setTimeout(createPoll, 250);
+  if (a === "loc") shareLocation();
+  if (a === "ct") setTimeout(shareContact, 250);
+}
 function attachMenu() {
+  if (isDesktop()) {
+    const old = document.getElementById("apop");
+    if (old) { old.remove(); return; }
+    const b = $("#attach").getBoundingClientRect(), dark = document.documentElement.dataset.theme === "dark";
+    const d = document.createElement("div");
+    d.id = "apop"; d.style.cssText = "position:fixed;inset:0;z-index:15";
+    d.innerHTML = `<div style="position:absolute;left:${Math.max(8, b.left)}px;bottom:${window.innerHeight - b.top + 10}px;min-width:210px;background:${dark ? "#17213a" : "#fff"};color:${dark ? "#f1f3f9" : "#14213D"};border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.3);padding:8px">${ATTACH.map(([a, ic, t, col]) => `<button data-a="${a}" style="display:flex;align-items:center;gap:14px;width:100%;padding:9px 14px;border-radius:10px;font-weight:600;text-align:left;background:none;color:inherit"><span style="width:36px;height:36px;border-radius:50%;background:${col};display:grid;place-items:center;font-size:18px;color:#fff;flex:none">${ic}</span>${t}</button>`).join("")}</div>`;
+    const onKey = (e) => { if (e.key === "Escape") close(); };
+    const close = () => { d.remove(); document.removeEventListener("keydown", onKey); };
+    document.addEventListener("keydown", onKey);
+    d.onclick = (e) => { const a = e.target.closest("[data-a]"); close(); if (a) runAttach(a.dataset.a); };
+    document.body.appendChild(d);
+    return;
+  }
   const s = $("#sheet");
-  s.innerHTML = `<div class="box"><button data-a="photo">📷 Photo</button><button data-a="poll">📊 Poll</button><button data-a="loc">📍 Location</button><button data-a="ct">👤 Contact</button><button data-a="x">Cancel</button></div>`;
+  s.innerHTML = `<div class="box"><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:14px 4px 8px">${ATTACH.map(([a, ic, t, col]) => `<button data-a="${a}" style="display:flex;flex-direction:column;align-items:center;gap:6px;width:auto;padding:6px 2px;background:none;font-size:13px;font-weight:600;text-align:center"><span style="width:58px;height:58px;border-radius:50%;background:${col};display:grid;place-items:center;font-size:26px;color:#fff">${ic}</span>${t}</button>`).join("")}</div><button data-a="x" style="text-align:center">Cancel</button></div>`;
   openModal(s);
   s.onclick = (ev) => {
-    const a = ev.target.dataset.a;
+    const a = ev.target.closest("[data-a]") ? ev.target.closest("[data-a]").dataset.a : "";
     if (!a && ev.target !== s) return;
     closeModal(s);
-    if (a === "photo") $("#file").click();                     // must run straight from the tap
-    if (a === "poll") setTimeout(createPoll, 250);
-    if (a === "loc") shareLocation();
-    if (a === "ct") setTimeout(shareContact, 250);
+    if (a && a !== "x") runAttach(a);
   };
 }
 function pollDialog() {
@@ -1088,6 +1112,51 @@ async function shareContact() {
   for (const u of r.ids) { const p = people[u] || {}; watch(u); await sendMessage({type: "contact", uid: u, name: nameOf(u), phone: p.phone || "", email: p.email || ""}, "👤 " + nameOf(u)); }
 }
 
+/* contact name, clear chat, export chat, report */
+async function editContactName() {
+  const u = people[peerUid] || {}, saved = contacts[peerUid] ? contacts[peerUid].name : "";
+  const n = await dialog({title: "Contact name", text: "Only you see this name. Leave it empty to use their own profile name.", input: "text", value: saved || u.name || "", ok: "Save"});
+  if (n === null) return;
+  const nn = n.trim().slice(0, 40);
+  try {
+    if (!nn || nn === (u.name || "")) { if (contacts[peerUid]) await deleteDoc(doc(db, "users", me.uid, "contacts", peerUid)); toast("Name reset."); }
+    else { await setDoc(doc(db, "users", me.uid, "contacts", peerUid), {name: nn}); toast("Name saved."); }
+  } catch (err) { fail(err); }
+}
+async function clearChat() {
+  if (!(await dialog({title: "Clear this chat?", text: "All messages are removed from your view. " + (GROUP ? "Other members keep them." : "The other person keeps their copy."), ok: "Clear", danger: true}))) return;
+  try {
+    await updateDoc(chatRef(), {["clearedAt." + me.uid]: serverTimestamp(), ["unread." + me.uid]: 0});
+    cur = {...cur, clearedAt: {...(cur.clearedAt || {}), [me.uid]: {toMillis: () => Date.now()}}};   // show it at once
+    raw = raw.filter(visibleMsg); decodeAndShow();
+    toast("Chat cleared.");
+  } catch (err) { fail(err); }
+}
+function exportChat() {
+  const list = msgs.filter((m) => !m.deleted);
+  if (!list.length) return toast("There are no messages to export.");
+  const title = GROUP ? (cur && cur.name) || "Group" : nameOf(peerUid);
+  const lines = list.map((m) => {
+    const when = new Date(ms(m.createdAt)).toLocaleString();
+    return m.type === "system" ? `[${when}] ${m.text}` : `[${when}] ${m.senderId === me.uid ? "You" : nameOf(m.senderId)}: ${msgPreview(m)}`;
+  });
+  const blob = new Blob(["emaindi chat with " + title + "\nexported " + new Date().toLocaleString() + "\n\n" + lines.join("\n") + "\n"], {type: "text/plain;charset=utf-8"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = "emaindi-" + title.replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-").slice(0, 40) + ".txt";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast("Chat exported (text only).");
+}
+async function reportChat() {
+  const reason = await dialog({title: GROUP ? "Report this group" : "Report " + nameOf(peerUid), text: "Tell us what is wrong. The app owner will review it.", input: "textarea", ok: "Send report"});
+  if (reason === null) return;
+  if (!reason.trim()) return toast("Please describe the problem.");
+  try {
+    await addDoc(collection(db, "reports"), {reporter: me.uid, type: GROUP ? "group" : "user", target: GROUP ? cid : peerUid, chatId: cid, reason: reason.trim().slice(0, 1000), createdAt: serverTimestamp()});
+    toast("Report sent. Thank you.");
+  } catch (err) { fail(err); }
+}
+
 /* full-screen contact info (tap the name at the top of a 1:1 chat) */
 function openInfoScreen(el) { if (el.hidden) history.pushState({cinfo: 1}, ""); el.hidden = false; }
 function closeInfoScreen(el) { if (el.hidden) return; el.hidden = true; if (history.state && history.state.cinfo) history.back(); }
@@ -1114,13 +1183,17 @@ function renderContactInfo() {
   const row = (a, ic, t, sub, danger) => `<button data-a="${a}" style="display:flex;align-items:center;gap:16px;width:100%;padding:14px 20px;text-align:left;border-top:1px solid var(--line);background:none;${danger ? "color:#d93025;" : ""}"><span style="font-size:22px;width:28px;text-align:center">${ic}</span><span style="flex:1;min-width:0"><span style="display:block;font-weight:600">${t}</span>${sub ? `<small style="opacity:.65">${sub}</small>` : ""}</span></button>`;
   const stars = msgs.filter((m) => !m.deleted && isStarred(cid, m.id)).length;
   el.innerHTML = `<div style="position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:8px;padding:10px 12px;padding-top:max(10px,env(safe-area-inset-top));background:#14213D;color:#fff"><button data-a="x" aria-label="Back" style="color:#fff;font-size:22px;width:38px;height:38px">&#8592;</button><b style="font-size:17px">Contact info</b></div>
-    <div style="text-align:center;padding:24px 16px 14px"><div style="width:140px;height:140px;margin:0 auto 12px">${pic}</div><div style="font-size:22px;font-weight:700">${esc(name)}${self ? " (You)" : ""}</div>${u.phone ? `<div style="opacity:.8;margin-top:2px">${esc(u.phone)}</div>` : ""}${u.email ? `<div style="opacity:.8">${esc(u.email)}</div>` : ""}${status ? `<div style="opacity:.65;margin-top:6px">${esc(status)}</div>` : ""}</div>
+    <div style="text-align:center;padding:24px 16px 14px"><div style="width:140px;height:140px;margin:0 auto 12px">${pic}</div><div style="font-size:22px;font-weight:700">${esc(name)}${self ? " (You)" : ""}</div>${contacts[uid] && u.name && contacts[uid].name !== u.name ? `<div style="opacity:.6;font-size:14px">~ ${esc(u.name)}</div>` : ""}${u.phone ? `<div style="opacity:.8;margin-top:2px">${esc(u.phone)}</div>` : ""}${u.email ? `<div style="opacity:.8">${esc(u.email)}</div>` : ""}${status ? `<div style="opacity:.65;margin-top:6px">${esc(status)}</div>` : ""}</div>
     <div style="display:flex;gap:10px;padding:0 16px 14px">${self ? "" : act("call", "📞", "Call")}${act("search", "🔍", "Search")}${self ? "" : act("mute", isMuted(cid) ? "🔔" : "🔇", isMuted(cid) ? "Unmute" : "Mute")}</div>
     ${u.bio ? `<div style="padding:12px 20px;border-top:1px solid var(--line)"><small style="opacity:.6">About</small><div style="overflow-wrap:anywhere;white-space:pre-wrap">${esc(u.bio)}</div></div>` : ""}
+    ${self ? "" : row("name", "✏️", "Edit contact name", contacts[uid] ? "Saved as " + esc(contacts[uid].name) : "Only you see this name")}
     ${row("stars", "⭐", "Starred messages", stars ? stars + " in this chat" : "None yet")}
     ${row("ttl", "⏳", "Disappearing messages", ttlLabel())}
     ${row("wall", "🎨", "Chat wallpaper", WALLS[wallOf(cid)] ? WALLS[wallOf(cid)].label : "")}
+    ${row("export", "📤", "Export chat", "Save the messages as a text file")}
+    ${row("clear", "🧹", "Clear chat", "Remove all messages from your view", true)}
     ${self ? "" : row("block", "🚫", isBlocked(uid) ? "Unblock " + esc(name) : "Block " + esc(name), "", true)}
+    ${self ? "" : row("report", "🚩", "Report " + esc(name), "", true)}
     <div style="height:max(24px,env(safe-area-inset-bottom))"></div>`;
 }
 function showContactInfo() {
@@ -1141,6 +1214,10 @@ function showContactInfo() {
       if (a === "stars") return showStarred();
       if (a === "ttl") return ttlMenu();
       if (a === "wall") return wallpaperMenu();
+      if (a === "name") return editContactName();
+      if (a === "export") return exportChat();
+      if (a === "clear") return clearChat();
+      if (a === "report") return reportChat();
       if (a === "block") return toggleBlock(peerUid);
     });
   }
