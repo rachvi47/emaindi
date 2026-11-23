@@ -13,6 +13,11 @@
   <link rel="stylesheet" href="home.css">
   <style>
     #calls{flex:1;overflow-y:auto}
+    #list{position:relative}
+    #rows{padding-bottom:5.5rem}
+    #aiFab{position:absolute;right:1rem;bottom:calc(4.4rem + env(safe-area-inset-bottom));z-index:6;width:3.6rem;height:3.6rem;border-radius:50%;border:0;background:linear-gradient(135deg,#7e57c2,#1e88e5);color:#fff;font-size:2.1rem;font-weight:700;line-height:1;display:grid;place-items:center;box-shadow:0 6px 18px rgba(30,60,140,.4);cursor:pointer;transition:transform .15s}
+    #aiFab:hover{transform:scale(1.07)}
+    #aiFab:active{transform:scale(.95)}
     .chip{flex:none;padding:.4rem .95rem;border-radius:2rem;border:1px solid var(--line);background:none;font-weight:600;font-size:.85rem;color:var(--soft);cursor:pointer}
     .chip.on{background:var(--navy);color:#fff;border-color:var(--navy)}
     :root[data-theme=dark] .chip.on{background:var(--marigold);color:#14213D;border-color:var(--marigold)}
@@ -53,6 +58,7 @@
       </div>
       <div id="rows"></div>
       <div id="calls" hidden></div>
+      <button id="aiFab" aria-label="Chat with AI">∞</button>
 
       <!-- bottom bar: Messages and Calls (symbols only) -->
       <nav id="tabs">
