@@ -1,8 +1,8 @@
 // chat.js - one conversation (chat.html?u=<other person's uid>).
-import {db, doc, getDoc, setDoc, updateDoc, addDoc, collection, query, orderBy, onSnapshot, serverTimestamp, increment, arrayUnion} from "./fire.js";
+import {db, doc, getDoc, setDoc, updateDoc, addDoc, collection, query, orderBy, limit, onSnapshot, serverTimestamp, increment, arrayUnion} from "./fire.js";
 import {$, esc, ms, hm, me, chats, people, hooks, watch, chatId, nameOf, avatar, dayLabel, online, hidden, mySet, isTyping,
   encryptText, decryptText, isLocked, isUnlocked, askUnlock, relock, openModal, closeModal, showInfo, startSession,
-  dialog, toast, fitViewport, lsFlag, groupAvatar, pickPeople, isBlocked, toggleBlock, visibleChat, peerOf, isStarred, toggleStar, wallOf, setWall, WALLS, isMuted, setMute, onBack, contacts} from "./common.js";
+  dialog, toast, fitViewport, lsFlag, groupAvatar, pickPeople, isBlocked, toggleBlock, visibleChat, peerOf, isStarred, toggleStar, wallOf, setWall, WALLS, isMuted, setMute, onBack, contacts, askAI} from "./common.js";
 import {initCalls, startCall} from "./call.js";
 import {deleteDoc, writeBatch, getDocs as getDocsFs} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 // Cloud Storage (videos, files, full-size photos) needs the Firebase Blaze plan. Until you upgrade, leave this false:
@@ -19,6 +19,7 @@ import {readChatMessages, saveChatMessages} from "./offline.js";
 const qs = new URLSearchParams(location.search);
 const groupId = qs.get("g"), GROUP = !!groupId;          // GROUP: chat.html?g=<group id>
 const peerUid = GROUP ? "" : qs.get("u");
+const AI = peerUid === "ai";   // the built-in AI assistant chat (private to each person)
 if (!peerUid && !GROUP) location.replace("home.html");
 const MAX_MEDIA = 720000;      // a Firestore document must stay under 1 MB, so photos / voice are kept below this size
 
@@ -61,7 +62,7 @@ function renderHead() {
   applyComposer();
   const u = people[peerUid] || {}, self = isSelf();
   // CHANGED: in a chat with yourself there is no online / typing / last seen status
-  const st = self ? "Message yourself" : isTyping(cur) ? '<span class="typing-txt">typing<span class="tdots"><i></i><i></i><i></i></span></span>' : hidden(u) ? "" : online(u) ? "online" : u.lastActive ? "last seen " + dayLabel(ms(u.lastActive)).toLowerCase() + " at " + hm(ms(u.lastActive)) : "";
+  const st = AI ? (aiBusy ? "typing…" : "AI assistant") : self ? "Message yourself" : isTyping(cur) ? '<span class="typing-txt">typing<span class="tdots"><i></i><i></i><i></i></span></span>' : hidden(u) ? "" : online(u) ? "online" : u.lastActive ? "last seen " + dayLabel(ms(u.lastActive)).toLowerCase() + " at " + hm(ms(u.lastActive)) : "";
   $("#peer").innerHTML = `${avatar(peerUid, "sm")}<div style="min-width:0"><div class="nm">${esc(nameOf(peerUid))}${self ? " (You)" : ""}${cur && cur.ttl > 0 ? " ⏳" : ""}</div><small>${st}</small></div>`;
 }
 $("#peer").addEventListener("click", () => (GROUP ? showGroupInfo() : showContactInfo()));
@@ -96,6 +97,7 @@ const visibleMsg = (m) => !(m.deletedFor || []).includes(me.uid)
   && ms(m.createdAt) > ms(cur && cur.clearedAt && cur.clearedAt[me.uid])
   && !isExpired(m);
 async function begin(known) {
+  if (!known && AI) { listening = false; renderMsgs(true); return; }   // the AI chat is only created when you send your first message
   if (!known) {     // a brand-new chat: create it (merge, so nothing existing is overwritten)
     try { await setDoc(doc(db, "chats", cid), {participants: [me.uid, peerUid].sort()}, {merge: true}); }
     catch (err) { console.error(err); toast("Could not open chat: " + (err.code || err.message)); return; }
@@ -212,6 +214,7 @@ function renderMsgs(force) {
   if (!cur) return;
   const box = $("#msgs"), stick = force || box.scrollHeight - box.scrollTop - box.clientHeight < 140;
   let h = "", last = "";
+  if (AI && !msgs.length) h = AI_WELCOME;
   for (const m of msgs) {
     const t = ms(m.createdAt), d = dayLabel(t), mine = m.senderId === me.uid;
     if (d !== last) { h += `<div class="day">${d}</div>`; last = d; }
@@ -245,14 +248,18 @@ async function sendMessage(fields, previewText) {
   const ment = GROUP && fields.text ? mentions.filter((x) => fields.text.includes("@" + x.n)) : [];   // @mentions still present in the text
   mentions = [];
   const fail = (err) => { console.error(err); toast("Message could not be sent."); };
+  if (AI && !chats.some((c) => c.id === cid)) {   // first message to the AI: create your private chat now
+    try { await setDoc(doc(db, "chats", cid), {participants: [me.uid, "ai"].sort(), isAI: true}, {merge: true}); } catch (err) { fail(err); return false; }
+  }
   // not awaited on purpose: offline, these wait in the phone's queue and go out when the internet returns
   addDoc(collection(db, "chats", cid, "messages"), {senderId: me.uid, createdAt: serverTimestamp(), replyTo: rep, deleted: false, ...fields, ...(ment.length ? {mentions: ment} : {}), text}).catch(fail);
   // CHANGED: a message to yourself is never "unread"
   const chatUpdate = {lastMessage: last, lastMessageAt: serverTimestamp(), lastSender: me.uid};
   if (GROUP) chatUpdate.lastMentions = ment.map((x) => x.u);   // lets muted people still be alerted
   if (GROUP) ((cur && cur.participants) || []).filter((u) => u !== me.uid).forEach((u) => (chatUpdate["unread." + u] = increment(1)));
-  else if (!isSelf()) chatUpdate["unread." + peerUid] = increment(1);
+  else if (!isSelf() && !AI) chatUpdate["unread." + peerUid] = increment(1);
   updateDoc(doc(db, "chats", cid), chatUpdate).catch(fail);
+  if (AI && (fields.text || "").trim()) aiRespond(fields.text);   // ask Gemini for the answer
   return true;
 }
 async function sendText() {
@@ -269,7 +276,7 @@ $("#txt").addEventListener("focus", () => setTimeout(fitViewport, 300));
 /* ---------- typing indicator (what the other person sees) ---------- */
 let typingOn = false, typingSentAt = 0;
 function sendTyping(on) {
-  if (!cid || isSelf()) return;      // nobody to show "typing…" to in a chat with yourself
+  if (!cid || isSelf() || AI) return;      // nobody to show "typing…" to in a chat with yourself or the AI
   if (on) { if (Date.now() - typingSentAt < 2500) return; typingSentAt = Date.now(); typingOn = true; }
   else { if (!typingOn) return; typingOn = false; typingSentAt = 0; }
   updateDoc(doc(db, "chats", cid), {["typing." + me.uid]: on ? serverTimestamp() : 0}).catch(() => {});
@@ -534,7 +541,7 @@ function actions(id) {
   const textual = !m.type || m.type === "text";
   const canEditMsg = mine && !m.deleted && textual && Date.now() - ms(m.createdAt) < 30 * 60e3;   // edit within 30 minutes
   const rxRow = m.deleted ? "" : `<div style="display:flex;justify-content:space-around;padding:8px 4px 6px">${["👍", "❤️", "😂", "😮", "😢", "🙏"].map((e) => `<button data-r="${e}" style="width:auto;padding:6px 8px;font-size:24px;border-radius:50%;${(m.reactions || {})[me.uid] === e ? "background:rgba(52,183,241,.28);" : ""}">${e}</button>`).join("")}</div>`;
-  s.innerHTML = `<div class="box" style="max-height:88vh;overflow-y:auto">${rxRow}${m.deleted ? "" : '<button data-a="reply">Reply</button>'}${!m.deleted && (!m.type || m.type === "text" || m.text) ? '<button data-a="copy">Copy</button>' : ""}${!m.deleted && m.type !== "poll" ? '<button data-a="fwd">Forward</button>' : ""}${!m.deleted ? `<button data-a="star">${isStarred(cid, m.id) ? "⭐ Unstar" : "⭐ Star"}</button>` : ""}${!m.deleted && canPin() ? `<button data-a="pin">${cur && cur.pinned && cur.pinned.id === m.id ? "📌 Unpin" : "📌 Pin to top"}</button>` : ""}${mine && !m.deleted ? '<button data-a="info">ℹ️ Message info</button>' : ""}${canEditMsg ? '<button data-a="edit">Edit</button>' : ""}<button data-a="delme" class="danger">Delete for me</button>${mine && !m.deleted ? '<button data-a="delall" class="danger">Delete for everyone</button>' : ""}<button data-a="x">Cancel</button></div>`;
+  s.innerHTML = `<div class="box" style="max-height:88vh;overflow-y:auto">${rxRow}${m.deleted ? "" : '<button data-a="reply">Reply</button>'}${!m.deleted && (!m.type || m.type === "text" || m.text) ? '<button data-a="copy">Copy</button>' : ""}${!m.deleted && m.text && (!m.type || m.type === "text") ? '<button data-a="tr">🌐 Translate</button>' : ""}${!m.deleted && m.type !== "poll" ? '<button data-a="fwd">Forward</button>' : ""}${!m.deleted ? `<button data-a="star">${isStarred(cid, m.id) ? "⭐ Unstar" : "⭐ Star"}</button>` : ""}${!m.deleted && canPin() ? `<button data-a="pin">${cur && cur.pinned && cur.pinned.id === m.id ? "📌 Unpin" : "📌 Pin to top"}</button>` : ""}${mine && !m.deleted ? '<button data-a="info">ℹ️ Message info</button>' : ""}${canEditMsg ? '<button data-a="edit">Edit</button>' : ""}<button data-a="delme" class="danger">Delete for me</button>${mine && !m.deleted ? '<button data-a="delall" class="danger">Delete for everyone</button>' : ""}<button data-a="x">Cancel</button></div>`;
   openModal(s);
   s.onclick = async (ev) => {
     const a = ev.target.dataset.a, rx = ev.target.dataset.r;
@@ -545,6 +552,7 @@ function actions(id) {
       updateDoc(ref, {["reactions." + me.uid]: (m.reactions || {})[me.uid] === rx ? "" : rx}).catch((err) => { console.error(err); toast("Could not add the reaction."); });
       return;
     }
+    if (a === "tr") { await wait(250); return translateMessage(m); }
     if (a === "fwd") { await wait(250); return forwardMessage(m); }
     if (a === "edit") { await wait(250); return editMessage(m, ref); }
     if (a === "star") { toggleStar(cid, m.id).then((ok) => ok && toast(isStarred(cid, m.id) ? "Message starred." : "Star removed.")); return; }
@@ -602,13 +610,13 @@ async function editMessage(m, ref) {
 }
 
 // choose which chats to forward to
-function pickChats() {
+function pickChats(title = "Forward to…", okLabel = "Send", skipSelf = false) {
   return new Promise((res) => {
-    const list = chats.filter((c) => visibleChat(c) && !isLocked(c.id));
+    const list = chats.filter((c) => visibleChat(c) && !isLocked(c.id) && !(skipSelf && c.id === cid));
     const nm = (c) => (c.isGroup ? c.name || "Group" : nameOf(peerOf(c)) + (peerOf(c) === me.uid ? " (You)" : ""));
     const rows = list.length ? list.map((c) => `<label style="display:flex;align-items:center;gap:10px;padding:8px 2px;cursor:pointer"><input type="checkbox" value="${esc(c.id)}" style="width:18px;height:18px;flex:none">${c.isGroup ? groupAvatar(c.id, c.name, "sm", c.photo) : avatar(peerOf(c), "sm")}<span style="min-width:0">${esc(nm(c))}</span></label>`).join("") : '<p style="opacity:.7">You have no other chats yet.</p>';
     const d = $("#dlg");
-    d.innerHTML = `<div class="dbox"><h3>Forward to…</h3><div style="max-height:45vh;overflow:auto;text-align:left;margin:8px 0">${rows}</div><div class="dact"><button data-a="c">Cancel</button><button data-a="o">Send</button></div></div>`;
+    d.innerHTML = `<div class="dbox"><h3>${esc(title)}</h3><div style="max-height:45vh;overflow:auto;text-align:left;margin:8px 0">${rows}</div><div class="dact"><button data-a="c">Cancel</button><button data-a="o">${esc(okLabel)}</button></div></div>`;
     d.hidden = false;
     const done = (v) => { d.hidden = true; d.onclick = null; res(v); };
     d.onclick = (e) => {
@@ -803,6 +811,7 @@ function showGroupInfo() {
     <div style="display:flex;gap:8px;margin:8px 0;width:100%"><button class="btn ghost" data-a="gsearch" style="margin:0;flex:1">🔍 Search</button><button class="btn ghost" data-a="gstars" style="margin:0;flex:1">⭐ Starred</button></div>
     <div style="display:flex;gap:8px;margin:0 0 8px;width:100%"><button class="btn ghost" data-a="gttl" style="margin:0;flex:1">⏳ ${esc(ttlLabel())}</button><button class="btn ghost" data-a="gwall" style="margin:0;flex:1">🎨 Wallpaper</button></div>
     <div style="display:flex;gap:8px;margin:0 0 8px;width:100%"><button class="btn ghost" data-a="gexport" style="margin:0;flex:1">📤 Export</button><button class="btn ghost" data-a="gclear" style="margin:0;flex:1">🧹 Clear</button><button class="btn ghost" data-a="greport" style="margin:0;flex:1">🚩 Report</button></div>
+    <button class="btn ghost" data-a="gai">✨ Summarize chat with AI</button>
     ${edit ? '<button class="btn ghost" data-a="edit">Edit name &amp; description</button>' : ""}${edit && cur.photo ? '<button class="btn ghost" data-a="rmphoto">Remove group photo</button>' : ""}
     ${iAdmin ? `<div style="text-align:left;margin:10px 0;border-top:1px solid rgba(128,128,128,.25);padding-top:6px"><b style="font-size:13px;opacity:.7">GROUP SETTINGS</b>${chk("onlyAdminsPost", "Only admins can send messages", "Everyone else can only read")}${chk("membersCanAdd", "Members can add people", "Otherwise only admins can")}${chk("membersCanEdit", "Members can edit group info", "Name, photo and description")}</div>` : ""}
     <div style="text-align:left;max-height:34vh;overflow:auto;margin:10px 0">${members.map(row).join("")}${iAdmin ? '<small style="display:block;opacity:.55;padding:4px">Tap a member to make them admin or remove them.</small>' : ""}</div>
@@ -848,6 +857,7 @@ function showGroupInfo() {
         r.ids.forEach((u) => (upd["joinedAt." + u] = serverTimestamp()));
         await sysMsg(who + " added " + r.ids.map((u) => nameOf(u)).join(", "));
         await updateDoc(chatRef(), upd);
+      } else if (a === "gai") { await summarizeChat();
       } else if (a === "gexport") { exportChat();
       } else if (a === "gclear") { await clearChat();
       } else if (a === "greport") { await reportChat();
@@ -1112,6 +1122,92 @@ async function shareContact() {
   for (const u of r.ids) { const p = people[u] || {}; watch(u); await sendMessage({type: "contact", uid: u, name: nameOf(u), phone: p.phone || "", email: p.email || ""}, "👤 " + nameOf(u)); }
 }
 
+/* ---------- the AI chat (Emaindi AI) ---------- */
+const AI_WELCOME = '<div style="text-align:center;padding:30px 18px;opacity:.85"><div style="font-size:52px;line-height:1">∞</div><div style="font-weight:700;font-size:18px;margin:8px 0 6px">Emaindi AI</div><div style="font-size:14px;line-height:1.5">Ask me anything, get help writing a message, or let me summarize one of your chats.<br>This conversation is private to you.</div></div>';
+let aiBusy = false, aiAgain = false, aiOverride = null;
+function setupAIBar() {   // quick buttons above the message box
+  if (document.getElementById("aibar")) return;
+  const bar = document.createElement("div"), chip = "flex:none;padding:7px 13px;border-radius:2rem;border:1px solid var(--line);font-size:13px;font-weight:600;background:none;color:inherit;white-space:nowrap";
+  bar.id = "aibar"; bar.style.cssText = "display:flex;gap:8px;padding:8px 12px;overflow-x:auto;border-top:1px solid var(--line);background:var(--paper)";
+  bar.innerHTML = `<button data-k="sum" style="${chip}">✨ Summarize a chat</button><button data-k="write" style="${chip}">✍️ Help me write</button><button data-k="explain" style="${chip}">💡 Explain simply</button>`;
+  $("#composer").before(bar);
+  bar.onclick = (e) => {
+    const k = e.target.dataset.k; if (!k) return;
+    if (k === "sum") return aiSummarizePick();
+    const t = $("#txt"); t.value = k === "write" ? "Help me write a message to " : "Explain in simple words: ";
+    t.focus(); grow(); updateSendMic();
+  };
+}
+async function aiRespond(sentText) {
+  if (aiBusy) { aiAgain = true; return; }
+  aiBusy = true; renderHead();
+  const override = aiOverride; aiOverride = null;
+  try {
+    let reply;
+    if (override) reply = await askAI(override.task, override.text);
+    else {
+      const hist = msgs.filter((m) => !m.deleted && m.text && m.type !== "system").slice(-14).map((m) => ({role: m.senderId === "ai" ? "model" : "user", text: m.text}));
+      if (sentText && (!hist.length || hist[hist.length - 1].role !== "user" || hist[hist.length - 1].text !== sentText)) hist.push({role: "user", text: sentText});
+      if (!hist.length || hist[hist.length - 1].role !== "user") return;
+      reply = await askAI("chat", "", {history: hist, lang: langName((navigator.language || "en").split("-")[0])});
+    }
+    if (reply === null) return;   // the person said no to the AI notice
+    reply = String(reply).replace(/\*\*(.*?)\*\*/g, "$1").trim();
+    if (!reply) return;
+    await addDoc(collection(db, "chats", cid, "messages"), {senderId: "ai", ai: true, createdAt: serverTimestamp(), text: reply.slice(0, 6000), replyTo: null, deleted: false});
+    await updateDoc(doc(db, "chats", cid), {lastMessage: reply.slice(0, 200), lastMessageAt: serverTimestamp(), lastSender: "ai", ["unread." + me.uid]: increment(1)});
+  } catch (err) { console.error(err); toast(err.message || "The AI could not answer."); }
+  finally { aiBusy = false; renderHead(); if (aiAgain) { aiAgain = false; aiRespond(""); } }
+}
+async function aiSummarizePick() {   // choose one of your chats, the AI summarizes it right here
+  const targets = await pickChats("Summarize which chat?", "Summarize", true);
+  if (!targets || !targets.length) return;
+  const c = targets[0];
+  if (targets.length > 1) toast("Summarizing the first chat you picked.");
+  const title = c.isGroup ? c.name || "Group" : nameOf(peerOf(c)) + (peerOf(c) === me.uid ? " (You)" : "");
+  toast("Reading the chat…");
+  let list = [];
+  try {
+    const snap = await getDocsFs(query(collection(db, "chats", c.id, "messages"), orderBy("createdAt", "desc"), limit(150)));
+    const since = Math.max(ms(c.clearedAt && c.clearedAt[me.uid]), ms(c.deletedAt && c.deletedAt[me.uid]), ms(c.joinedAt && c.joinedAt[me.uid]));
+    list = snap.docs.map((d) => ({id: d.id, ...d.data({serverTimestamps: "estimate"})}))
+      .filter((m) => !m.deleted && !(m.deletedFor || []).includes(me.uid) && ms(m.createdAt) > since && m.text && m.type !== "system" && m.type !== "call" && !String(m.text).startsWith("e2e:")).reverse();
+  } catch (err) { console.error(err); return toast("Could not read that chat."); }
+  if (list.length < 3) return toast("That chat has too few messages to summarize.");
+  aiOverride = {task: "summarize", text: list.map((m) => (m.senderId === me.uid ? "You" : nameOf(m.senderId)) + ": " + m.text).join("\n")};
+  sendMessage({text: "Summarize my chat with " + title}, "Summarize my chat with " + title);
+}
+
+/* Gemini AI: translate a message, summarize a chat */
+function langName(code) { try { return new Intl.DisplayNames(["en"], {type: "language"}).of(code) || "English"; } catch (e) { return "English"; } }
+function showAIResult(title, text) {
+  const clean = String(text).replace(/\*\*(.*?)\*\*/g, "$1").replace(/^\s*[*-]\s+/gm, "• ").trim();
+  const p = $("#info");
+  p.innerHTML = `<div class="box"><h2>${esc(title)}</h2><div style="text-align:left;white-space:pre-wrap;overflow-wrap:anywhere;max-height:50vh;overflow:auto;margin:10px 0;width:100%;line-height:1.45">${esc(clean)}</div><small style="display:block;opacity:.55;margin-bottom:8px">Made by Gemini AI. It can make mistakes.</small><button class="btn" data-a="copy">Copy</button><button class="btn ghost" data-a="x">Close</button></div>`;
+  openModal(p);
+  p.onclick = async (e) => {
+    const a = e.target.dataset.a;
+    if (a === "copy") { try { await navigator.clipboard.writeText(clean); toast("Copied."); } catch (err) { toast("Could not copy."); } return; }
+    if (a === "x" || e.target === p) closeModal(p);
+  };
+}
+async function translateMessage(m) {
+  toast("Translating…");
+  try {
+    const out = await askAI("translate", m.text, {lang: langName((navigator.language || "en").split("-")[0])});
+    if (out !== null) showAIResult("Translation", out);
+  } catch (err) { console.error(err); toast(err.message || "Could not translate."); }
+}
+async function summarizeChat() {
+  const list = msgs.filter((m) => !m.deleted && m.type !== "system" && m.type !== "call" && m.text).slice(-150);
+  if (list.length < 3) return toast("There are not enough messages to summarize.");
+  toast("Summarizing…");
+  try {
+    const out = await askAI("summarize", list.map((m) => (m.senderId === me.uid ? "You" : nameOf(m.senderId)) + ": " + m.text).join("\n"));
+    if (out !== null) showAIResult("Chat summary", out);
+  } catch (err) { console.error(err); toast(err.message || "Could not summarize."); }
+}
+
 /* contact name, clear chat, export chat, report */
 async function editContactName() {
   const u = people[peerUid] || {}, saved = contacts[peerUid] ? contacts[peerUid].name : "";
@@ -1176,17 +1272,18 @@ function chatMuteMenu() {
 }
 function renderContactInfo() {
   const el = document.getElementById("cinfo"); if (!el) return;
-  const uid = peerUid, u = people[uid] || {}, self = isSelf(), name = nameOf(uid);
-  const status = self ? "Message yourself" : hidden(u) ? "" : online(u) ? "online" : u.lastActive ? "last seen " + dayLabel(ms(u.lastActive)).toLowerCase() + " at " + hm(ms(u.lastActive)) : "";
-  const pic = u.photoUrl ? `<img data-a="photo" src="${esc(u.photoUrl)}" alt="" referrerpolicy="no-referrer" style="width:100%;height:100%;border-radius:50%;object-fit:cover;cursor:pointer">` : `<div style="width:100%;height:100%;border-radius:50%;background:#14213D;color:#FFC93C;display:grid;place-items:center;font-size:56px;font-weight:700">${esc((name[0] || "?").toUpperCase())}</div>`;
+  const uid = peerUid, u = AI ? {bio: "Ask questions, get help writing messages, and summarize your chats. This conversation is private to you."} : people[uid] || {}, self = isSelf() || AI, name = nameOf(uid);
+  const status = AI ? "AI assistant" : self ? "Message yourself" : hidden(u) ? "" : online(u) ? "online" : u.lastActive ? "last seen " + dayLabel(ms(u.lastActive)).toLowerCase() + " at " + hm(ms(u.lastActive)) : "";
+  const pic = AI ? '<div style="width:100%;height:100%;border-radius:50%;background:linear-gradient(135deg,#7e57c2,#1e88e5);color:#fff;display:grid;place-items:center;font-size:64px;font-weight:700">∞</div>' : u.photoUrl ? `<img data-a="photo" src="${esc(u.photoUrl)}" alt="" referrerpolicy="no-referrer" style="width:100%;height:100%;border-radius:50%;object-fit:cover;cursor:pointer">` : `<div style="width:100%;height:100%;border-radius:50%;background:#14213D;color:#FFC93C;display:grid;place-items:center;font-size:56px;font-weight:700">${esc((name[0] || "?").toUpperCase())}</div>`;
   const act = (a, ic, t) => `<button data-a="${a}" style="flex:1;display:grid;place-items:center;gap:4px;padding:12px 4px;border-radius:14px;background:rgba(128,128,128,.12);font-size:13px;font-weight:600"><span style="font-size:22px">${ic}</span>${t}</button>`;
   const row = (a, ic, t, sub, danger) => `<button data-a="${a}" style="display:flex;align-items:center;gap:16px;width:100%;padding:14px 20px;text-align:left;border-top:1px solid var(--line);background:none;${danger ? "color:#d93025;" : ""}"><span style="font-size:22px;width:28px;text-align:center">${ic}</span><span style="flex:1;min-width:0"><span style="display:block;font-weight:600">${t}</span>${sub ? `<small style="opacity:.65">${sub}</small>` : ""}</span></button>`;
   const stars = msgs.filter((m) => !m.deleted && isStarred(cid, m.id)).length;
   el.innerHTML = `<div style="position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:8px;padding:10px 12px;padding-top:max(10px,env(safe-area-inset-top));background:#14213D;color:#fff"><button data-a="x" aria-label="Back" style="color:#fff;font-size:22px;width:38px;height:38px">&#8592;</button><b style="font-size:17px">Contact info</b></div>
-    <div style="text-align:center;padding:24px 16px 14px"><div style="width:140px;height:140px;margin:0 auto 12px">${pic}</div><div style="font-size:22px;font-weight:700">${esc(name)}${self ? " (You)" : ""}</div>${contacts[uid] && u.name && contacts[uid].name !== u.name ? `<div style="opacity:.6;font-size:14px">~ ${esc(u.name)}</div>` : ""}${u.phone ? `<div style="opacity:.8;margin-top:2px">${esc(u.phone)}</div>` : ""}${u.email ? `<div style="opacity:.8">${esc(u.email)}</div>` : ""}${status ? `<div style="opacity:.65;margin-top:6px">${esc(status)}</div>` : ""}</div>
+    <div style="text-align:center;padding:24px 16px 14px"><div style="width:140px;height:140px;margin:0 auto 12px">${pic}</div><div style="font-size:22px;font-weight:700">${esc(name)}${isSelf() ? " (You)" : ""}</div>${contacts[uid] && u.name && contacts[uid].name !== u.name ? `<div style="opacity:.6;font-size:14px">~ ${esc(u.name)}</div>` : ""}${u.phone ? `<div style="opacity:.8;margin-top:2px">${esc(u.phone)}</div>` : ""}${u.email ? `<div style="opacity:.8">${esc(u.email)}</div>` : ""}${status ? `<div style="opacity:.65;margin-top:6px">${esc(status)}</div>` : ""}</div>
     <div style="display:flex;gap:10px;padding:0 16px 14px">${self ? "" : act("call", "📞", "Call")}${act("search", "🔍", "Search")}${self ? "" : act("mute", isMuted(cid) ? "🔔" : "🔇", isMuted(cid) ? "Unmute" : "Mute")}</div>
     ${u.bio ? `<div style="padding:12px 20px;border-top:1px solid var(--line)"><small style="opacity:.6">About</small><div style="overflow-wrap:anywhere;white-space:pre-wrap">${esc(u.bio)}</div></div>` : ""}
     ${self ? "" : row("name", "✏️", "Edit contact name", contacts[uid] ? "Saved as " + esc(contacts[uid].name) : "Only you see this name")}
+    ${row("ai", "✨", "Summarize chat", "A short summary made by Gemini AI")}
     ${row("stars", "⭐", "Starred messages", stars ? stars + " in this chat" : "None yet")}
     ${row("ttl", "⏳", "Disappearing messages", ttlLabel())}
     ${row("wall", "🎨", "Chat wallpaper", WALLS[wallOf(cid)] ? WALLS[wallOf(cid)].label : "")}
@@ -1211,6 +1308,7 @@ function showContactInfo() {
       if (a === "call") { closeInfoScreen(el); setTimeout(() => startCall(peerUid), 300); return; }
       if (a === "search") { closeInfoScreen(el); setTimeout(openFind, 300); return; }
       if (a === "mute") return chatMuteMenu();
+      if (a === "ai") return summarizeChat();
       if (a === "stars") return showStarred();
       if (a === "ttl") return ttlMenu();
       if (a === "wall") return wallpaperMenu();
@@ -1258,7 +1356,8 @@ startSession(async () => {
     cur = {id: cid, participants: [me.uid, peerUid].sort(), unread: {}, lastRead: {}, deliveredAt: {}};
   }
   initCalls();
-  if (isSelf()) $("#callBtn").style.display = "none";   // NEW: you can't call yourself
+  if (isSelf() || AI) $("#callBtn").style.display = "none";   // you can't call yourself or the AI
+  if (AI) { $("#attach").style.display = "none"; setupAIBar(); }
   renderHead(); renderMsgs(true);
   hooks.chatsChanged();         // in case the chat list has already loaded
 });
