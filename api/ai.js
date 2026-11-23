@@ -43,6 +43,7 @@ function bestFlash(names) {
   const ver = (n) => Number((n.match(/(\d+(?:\.\d+)?)/) || [0, 0])[1]);
   return pool.sort((a, b) => ver(b) - ver(a))[0] || null;
 }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const callGemini = (model, key, payload) => fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
   method: "POST", headers: {"Content-Type": "application/json", "x-goog-api-key": key}, body: JSON.stringify(payload),
 });
@@ -94,13 +95,16 @@ module.exports = async (req, res) => {
     if (host !== req.headers.host && !/^localhost(:\d+)?$/.test(host)) return res.status(403).json({error: "Not allowed."});
   }
 
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) return res.status(500).json({error: "AI is not set up yet (the server has no GEMINI_API_KEY)."});
-
   let uid = null;
   try { uid = await uidFromToken((req.headers.authorization || "").replace(/^Bearer\s+/i, "")); } catch (e) {}
   if (!uid) return res.status(401).json({error: "Please log in again."});
   if (tooMany(uid)) return res.status(429).json({error: "You have used the AI a lot. Please wait a few minutes."});
+
+  const key = (process.env.GEMINI_API_KEY || "").trim();
+  if (!key) {   // help find typos: only the NAMES of similar variables are shown, never their values
+    const near = Object.keys(process.env).filter((k) => /gem|google|genai|api.?key|^ai/i.test(k) && !/^(VERCEL|NEXT|NODE|AWS|NPM|FIREBASE)/i.test(k));
+    return res.status(500).json({error: "AI is not set up yet: the server cannot see GEMINI_API_KEY." + (near.length ? " Similar variable names it can see: " + near.join(", ") + "." : " It sees no similar variable, so it was not saved for Production or the project was not redeployed.")});
+  }
 
   const body = typeof req.body === "string" ? safeJson(req.body) : req.body || {};
   let payload;
@@ -122,6 +126,16 @@ module.exports = async (req, res) => {
       const names = await listModels(key), alt = bestFlash(names);
       if (alt && alt !== useModel) { const g2 = await callGemini(alt, key, payload); if (g2.ok) { useModel = alt; g = g2; } else g = g2; }
       if (g.status === 404) return res.status(502).json({error: "The AI model " + useModel + " was not found. Models your key can use: " + (names.slice(0, 6).join(", ") || "none") + ". Set GEMINI_MODEL in Vercel to one of them."});
+    }
+    if (g.status === 503 || g.status === 500) {   // Google says "busy": wait a moment and try again, then try another Flash model
+      const first = useModel;
+      await sleep(900);
+      g = await callGemini(first, key, payload);
+      if (g.status === 503 || g.status === 500) {
+        const alt = bestFlash((await listModels(key).catch(() => [])).filter((n) => n !== first));
+        if (alt) { const g3 = await callGemini(alt, key, payload); if (g3.ok) g = g3; }
+      }
+      if (g.status === 503 || g.status === 500) return res.status(503).json({error: "The AI is overloaded right now. Please try again in a minute."});
     }
     if (g.status === 429) return res.status(429).json({error: "The AI is busy right now. Try again in a minute."});
     if (!g.ok) { console.error("Gemini error", g.status, (await g.text()).slice(0, 300)); return res.status(502).json({error: "The AI could not answer (" + g.status + ")."}); }
