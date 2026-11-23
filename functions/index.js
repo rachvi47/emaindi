@@ -20,6 +20,7 @@ const millis = (t) => (t && t.toMillis ? t.toMillis() : 0);
 
 // the name the receiver sees: their saved contact name first, then the sender's profile (same order as the app)
 async function senderName(recipient, sender) {
+  if (sender === "ai") return "Emaindi AI";
   const c = await db.doc(`users/${recipient}/contacts/${sender}`).get();
   if (c.exists && c.data().name) return c.data().name;
   const u = await db.doc(`users/${sender}`).get();
