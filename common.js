@@ -68,7 +68,7 @@ const chatId = (a, b) => [a, b].sort().join("_");
 // a chat you deleted stays hidden until a NEW message arrives in it (deletedAt is newer than the last message)
 const visibleChat = (c) => !!c && Array.isArray(c.participants) && !!me && c.participants.includes(me.uid)
   && !(c.deletedAt && c.deletedAt[me.uid] && ms(c.deletedAt[me.uid]) >= ms(c.lastMessageAt));
-const nameOf = (uid) => (contacts[uid] && contacts[uid].name) || (people[uid] && (people[uid].name || people[uid].phone || people[uid].email)) || "Unknown";
+const nameOf = (uid) => uid === "ai" ? "Emaindi AI" : (contacts[uid] && contacts[uid].name) || (people[uid] && (people[uid].name || people[uid].phone || people[uid].email)) || "Unknown";
 const numberOf = (uid) => (people[uid] && (people[uid].phone || people[uid].email)) || "";
 
 /* ---------- end-to-end encryption (ECDH P-256 + AES-GCM, Web Crypto) ----------
@@ -240,6 +240,7 @@ function listTime(t) {
   return l === "Today" ? hm(t) : l === "Yesterday" ? l : new Date(t).toLocaleDateString([], {day: "2-digit", month: "2-digit", year: "2-digit"});
 }
 function avatar(uid, cls = "") {
+  if (uid === "ai") return `<div class="av ${cls}" style="background:linear-gradient(135deg,#7e57c2,#1e88e5);color:#fff;font-weight:700;font-size:1.25em">∞</div>`;   // the built-in AI assistant
   const u = people[uid] || {}, n = nameOf(uid);
   let h = 0; for (const ch of uid) h = (h * 31 + ch.charCodeAt(0)) % 360;
   const inner = u.photoUrl ? `<img src="${esc(u.photoUrl)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">` : esc((n[0] || "?").toUpperCase());
@@ -257,7 +258,7 @@ export function groupAvatar(id, name, cls = "", photo = "") {
 export function pickPeople({title, ok = "Add", exclude = [], nameField = false}) {
   return new Promise((res) => {
     const ids = new Set(Object.keys(contacts));
-    chats.forEach((c) => { if (!c.isGroup) { const o = peerOf(c); if (o && o !== me.uid) ids.add(o); } });
+    chats.forEach((c) => { if (!c.isGroup) { const o = peerOf(c); if (o && o !== me.uid && o !== "ai") ids.add(o); } });
     [...exclude, me.uid].forEach((u) => ids.delete(u));
     const list = [...ids];
     list.forEach((u) => watch(u));
@@ -490,6 +491,22 @@ async function registerDevice() {
     try { localStorage.removeItem("lastUid"); } catch (e) {}
     signOut(auth).catch(() => {}).finally(() => location.replace("login.html"));
   }, () => {});
+}
+
+/* ---------- Gemini AI (the key lives on the server in api/ai.js, never in this file) ---------- */
+export async function askAI(task, text, extra = {}) {
+  if (!auth.currentUser) throw new Error("Please log in again.");
+  let agreed = false; try { agreed = localStorage.getItem("aiOk") === "1"; } catch (e) {}
+  if (!agreed) {
+    const yes = await dialog({title: "Use Gemini AI?", text: "The text you choose is sent to Google's Gemini AI to get the answer. Nothing is sent unless you tap an AI option. Continue?", ok: "Continue"});
+    if (!yes) return null;
+    try { localStorage.setItem("aiOk", "1"); } catch (e) {}
+  }
+  const token = await auth.currentUser.getIdToken();
+  const res = await fetch("/api/ai", {method: "POST", headers: {"Content-Type": "application/json", Authorization: "Bearer " + token}, body: JSON.stringify({...extra, task, text: String(text).slice(0, 12000)})});
+  let data = {}; try { data = await res.json(); } catch (e) {}
+  if (!res.ok) throw new Error(data.error || (res.status === 404 ? "AI is not set up on the server yet." : "The AI request failed (" + res.status + ")."));
+  return data.text || "";
 }
 
 /* ---------- typing indicator (tracking what the other person is doing) ---------- */
