@@ -188,7 +188,7 @@ function chatMenu(uid, gid) {
     <button data-a="mute">${isMuted(cid) ? "🔔 Unmute" : "🔇 Mute"}</button>
     <button data-a="arch">${isArchived(cid) ? "📤 Unarchive" : "🗄️ Archive"}</button>
     <button data-a="lock">${isLocked(cid) ? "🔓 Unlock chat" : "🔒 Lock chat"}</button>
-    ${gid || self ? "" : `<button data-a="block">${blocked ? "✅ Unblock" : "🚫 Block chat"}</button>`}
+    ${gid || self || uid === "ai" ? "" : `<button data-a="block">${blocked ? "✅ Unblock" : "🚫 Block chat"}</button>`}
     ${gid ? "" : '<button data-a="del" class="danger">🗑️ Delete chat</button>'}
     <button data-a="x">Cancel</button></div>`;
   openModal(s);
@@ -459,7 +459,7 @@ function updateTabBadge() {
 function setTab(t) {
   tab = t;
   try { sessionStorage.setItem("homeTab", t); } catch (e) {}
-  $("#rows").hidden = t !== "chats"; $("#calls").hidden = t !== "calls"; document.querySelector(".search").hidden = t !== "chats"; $("#chips").hidden = t !== "chats";
+  $("#rows").hidden = t !== "chats"; $("#calls").hidden = t !== "calls"; document.querySelector(".search").hidden = t !== "chats"; $("#chips").hidden = t !== "chats"; $("#aiFab").hidden = t !== "chats";
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === t));
   if (t === "calls") loadCalls(); else renderList();
 }
@@ -474,7 +474,7 @@ async function loadCalls(force) {
   callsLoading = true;
   try {
     const locked = new Set(lockedIds());
-    const targets = chats.filter((c) => visibleChat(c) && !c.isGroup && !locked.has(c.id) && peerOf(c) !== me.uid).slice(0, 80);
+    const targets = chats.filter((c) => visibleChat(c) && !c.isGroup && !locked.has(c.id) && peerOf(c) !== me.uid && peerOf(c) !== "ai").slice(0, 80);
     const out = [];
     await Promise.all(targets.map(async (c) => {
       try {
@@ -517,6 +517,7 @@ $("#calls").addEventListener("click", async (e) => {
   if (r) openChat(r.dataset.peer).catch((err) => { console.error(err); toast("Could not open chat: " + (err.code || err.message)); });
 });
 document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => setTab(b.dataset.tab)));
+$("#aiFab").addEventListener("click", () => { location.href = "chat.html?u=ai"; });   // your private chat with Emaindi AI
 document.querySelectorAll("#chips .chip").forEach((b) => b.addEventListener("click", () => { filter = b.dataset.f; document.querySelectorAll("#chips .chip").forEach((x) => x.classList.toggle("on", x === b)); renderList(); }));
 
 /* ---------- start ---------- */
